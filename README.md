@@ -32,14 +32,43 @@ It's also designed to coexist with [cc-switch](https://github.com/farion1231/cc-
 
 ---
 
-## Prerequisite
+## ⚠️ Precedence: settings.json wins over shell env
 
-`~/.claude/settings.json` must **not** have a non-empty `env` block, or it'll silently override anything claude-multi sets.
+This is the **single most important thing to understand** before using claude-multi (or any other tool that tries to set Claude Code env vars from the shell).
 
-After install, `ccm doctor` tells you exactly whether this is set up correctly. To fix:
+When Claude Code starts, it loads the same variable (e.g. `ANTHROPIC_BASE_URL`) from multiple sources. The precedence is:
 
-- If using cc-switch: select a profile whose `env` is `{}`.
-- Or edit `~/.claude/settings.json` directly: change `"env": { ... }` to `"env": {}`.
+| Priority    | Source                                        | Scope         | Set by                       |
+|-------------|-----------------------------------------------|---------------|------------------------------|
+| 🟢 **WINS** | `~/.claude/settings.json` → `"env": { ... }`  | global        | cc-switch / manual edit      |
+| 🔴 **LOSES**| Shell-exported env vars (`export FOO=bar`)    | per-terminal  | claude-multi / your `.zshrc` |
+
+> **Concretely**: if `settings.json` has `"env": { "ANTHROPIC_BASE_URL": "https://x.com" }`,
+> then `ANTHROPIC_BASE_URL=https://y.com claude` (or `ccm use foo` → `claude`)
+> **silently runs against `https://x.com`**. Your shell value is overridden.
+
+Verified against [the official Claude Code env-vars docs](https://docs.claude.com/en/docs/claude-code/settings): the `env` field in `settings.json` is read at startup and injected into the process environment, overriding what the shell exported.
+
+### What this means for claude-multi
+
+claude-multi works **only when `settings.json` `env` is empty or absent**. Two ways to satisfy this:
+
+| If you use…       | Do this                                                                                        |
+|-------------------|------------------------------------------------------------------------------------------------|
+| **cc-switch**     | Select (or create) a profile whose `"env"` is `{}`. Keep that profile active.                  |
+| **No cc-switch**  | Manually edit `~/.claude/settings.json` so the `env` field is `{}` (or remove it entirely).    |
+
+After install, `ccm doctor` checks for this conflict and tells you exactly which keys are in conflict:
+
+```
+⚠ /Users/you/.claude/settings.json has a non-empty 'env' block.
+  conflicting keys: ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, ANTHROPIC_MODEL, ...
+  Those values will OVERRIDE anything ccm sets in the shell.
+  Fix: in cc-switch, switch to a profile whose 'env' is {} (empty),
+       or edit /Users/you/.claude/settings.json and replace the env block with: "env": {}
+```
+
+Until you fix this, **`claude-multi will appear to work but won't actually switch providers** — `ccm use idealab` reports success, but `claude` still goes to whatever provider settings.json pins.
 
 ---
 
