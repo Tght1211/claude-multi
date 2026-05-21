@@ -1,0 +1,5 @@
+# Provider .env files contain real auth tokens — never commit them.
+*.env
+# Templates are safe to commit.
+!*.env.example
+!.gitignore

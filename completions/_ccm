@@ -1,0 +1,40 @@
+#compdef ccm
+# zsh completion for ccm
+# Install: ensure ~/.claude-multi/completions is in $fpath BEFORE compinit.
+# init.sh handles this.
+
+_ccm() {
+  local -a cmds providers
+  cmds=(
+    'use:switch this shell to a provider'
+    'unuse:clear shell env, fall back to settings.json'
+    'list:list all providers'
+    'ls:list all providers (alias)'
+    'which:print active provider in this shell'
+    'add:create a new provider .env'
+    'edit:edit a provider .env in $EDITOR'
+    'rm:delete a provider .env'
+    'reload:regenerate claude-<name> functions'
+    'doctor:diagnose settings.json conflict and config'
+    'help:show usage'
+  )
+  local provdir="${CCM_PROVIDERS_DIR:-$HOME/.claude-multi/providers}"
+  providers=()
+  if [[ -d "$provdir" ]]; then
+    for f in "$provdir"/*.env(N); do
+      providers+=("${f:t:r}")
+    done
+  fi
+
+  if (( CURRENT == 2 )); then
+    _describe -t commands 'ccm command' cmds
+  elif (( CURRENT == 3 )); then
+    case "${words[2]}" in
+      use|edit|rm|remove|delete)
+        _describe -t providers 'provider' providers
+        ;;
+    esac
+  fi
+}
+
+_ccm "$@"

@@ -1,0 +1,295 @@
+#!/usr/bin/env bash
+# ccm — Claude-Code Multi-provider manager (CLI portion).
+# The `use`/`unuse`/`reload` subcommands are handled by the shell function in
+# ~/.claude-multi/init.sh (they MUST run in the current shell). This script
+# handles everything else: list, which, add, edit, rm, doctor, help.
+set -u
+
+CCM_HOME="${CCM_HOME:-$HOME/.claude-multi}"
+CCM_PROVIDERS_DIR="${CCM_PROVIDERS_DIR:-$CCM_HOME/providers}"
+SETTINGS_JSON="$HOME/.claude/settings.json"
+
+# ---- helpers ----------------------------------------------------------------
+
+_red()    { printf "\033[31m%s\033[0m" "$*"; }
+_green()  { printf "\033[32m%s\033[0m" "$*"; }
+_yellow() { printf "\033[33m%s\033[0m" "$*"; }
+_bold()   { printf "\033[1m%s\033[0m" "$*"; }
+_dim()    { printf "\033[2m%s\033[0m" "$*"; }
+
+_list_providers() {
+  [ -d "$CCM_PROVIDERS_DIR" ] || return 0
+  for f in "$CCM_PROVIDERS_DIR"/*.env; do
+    [ -e "$f" ] || continue
+    basename "$f" .env
+  done
+}
+
+_mask_token() {
+  local t="${1:-}"
+  local n=${#t}
+  if [ "$n" -le 8 ]; then
+    printf '****'
+  else
+    printf '%s****%s' "${t:0:4}" "${t: -4}"
+  fi
+}
+
+# Extract a single var's value from a .env file (best-effort, double-quoted).
+_envfile_get() {
+  local file="$1" key="$2"
+  awk -v k="$key" '
+    /^[[:space:]]*export[[:space:]]/ {
+      sub(/^[[:space:]]*export[[:space:]]+/,"")
+    }
+    {
+      n = index($0, "=")
+      if (n == 0) next
+      name = substr($0, 1, n-1)
+      val  = substr($0, n+1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
+      if (name == k) {
+        gsub(/^"|"$/, "", val)
+        gsub(/^'\''|'\''$/, "", val)
+        print val
+        exit
+      }
+    }
+  ' "$file" 2>/dev/null
+}
+
+# ---- subcommands ------------------------------------------------------------
+
+cmd_list() {
+  if [ ! -d "$CCM_PROVIDERS_DIR" ] || [ -z "$(_list_providers)" ]; then
+    echo "No providers configured yet. Add one with: ccm add <name>"
+    return 0
+  fi
+  local active="${CCM_ACTIVE_PROVIDER:-}"
+  printf '%-20s %-55s %s\n' "PROVIDER" "BASE_URL" "MODEL"
+  printf '%-20s %-55s %s\n' "--------" "--------" "-----"
+  for name in $(_list_providers); do
+    local f="$CCM_PROVIDERS_DIR/$name.env"
+    local url; url="$(_envfile_get "$f" ANTHROPIC_BASE_URL)"
+    local model; model="$(_envfile_get "$f" ANTHROPIC_MODEL)"
+    local marker=' '
+    if [ "$name" = "$active" ]; then
+      marker="$(_green '✓')"
+      printf '%s %-18s %-55s %s\n' "$marker" "$(_bold "$name")" "$url" "$model"
+    else
+      printf '%s %-18s %-55s %s\n' "$marker" "$name" "$url" "$model"
+    fi
+  done
+  if [ -n "$active" ]; then
+    echo
+    echo "$(_green '✓') active in this shell: $(_bold "$active")"
+  else
+    echo
+    echo "$(_dim 'no provider active in this shell — claude will use ~/.claude/settings.json')"
+  fi
+}
+
+cmd_which() {
+  if [ -n "${CCM_ACTIVE_PROVIDER:-}" ]; then
+    echo "$CCM_ACTIVE_PROVIDER"
+  else
+    echo "<none, falling back to ~/.claude/settings.json>"
+    return 1
+  fi
+}
+
+cmd_add() {
+  local name="${1:-}"
+  if [ -z "$name" ]; then
+    printf 'Provider name (e.g. deepseek, kimi): '
+    read -r name
+  fi
+  case "$name" in
+    *[!a-zA-Z0-9_-]*|'')
+      echo "ccm: invalid name '$name' (allowed: letters, digits, _ -)" >&2
+      return 2
+      ;;
+  esac
+  local f="$CCM_PROVIDERS_DIR/$name.env"
+  if [ -e "$f" ]; then
+    echo "ccm: $f already exists (use 'ccm edit $name')" >&2
+    return 1
+  fi
+  local base_url auth_token model
+  printf 'ANTHROPIC_BASE_URL  : '; read -r base_url
+  printf 'ANTHROPIC_AUTH_TOKEN: '; read -r auth_token
+  printf 'ANTHROPIC_MODEL     : '; read -r model
+  mkdir -p "$CCM_PROVIDERS_DIR"
+  {
+    echo "# Provider: $name (created by ccm add on $(date +%Y-%m-%d))"
+    echo "export ANTHROPIC_AUTH_TOKEN=\"$auth_token\""
+    echo "export ANTHROPIC_BASE_URL=\"$base_url\""
+    echo "export ANTHROPIC_MODEL=\"$model\""
+    echo "export ANTHROPIC_DEFAULT_HAIKU_MODEL=\"$model\""
+    echo "export ANTHROPIC_DEFAULT_OPUS_MODEL=\"$model\""
+    echo "export ANTHROPIC_DEFAULT_SONNET_MODEL=\"$model\""
+  } > "$f"
+  echo "ccm: wrote $f"
+  echo "ccm: run '$(_bold ccm reload)' (or open a new shell) to register $(_bold "claude-$name")"
+}
+
+cmd_edit() {
+  local name="${1:-}"
+  if [ -z "$name" ]; then
+    echo "usage: ccm edit <provider>" >&2
+    return 2
+  fi
+  local f="$CCM_PROVIDERS_DIR/$name.env"
+  if [ ! -f "$f" ]; then
+    echo "ccm: provider '$name' not found ($f)" >&2
+    return 1
+  fi
+  "${EDITOR:-vim}" "$f"
+}
+
+cmd_rm() {
+  local name="${1:-}"
+  if [ -z "$name" ]; then
+    echo "usage: ccm rm <provider>" >&2
+    return 2
+  fi
+  local f="$CCM_PROVIDERS_DIR/$name.env"
+  if [ ! -f "$f" ]; then
+    echo "ccm: provider '$name' not found ($f)" >&2
+    return 1
+  fi
+  printf 'Delete %s? [y/N] ' "$f"
+  local ans; read -r ans
+  case "$ans" in
+    y|Y|yes|YES) rm "$f" && echo "ccm: removed $f";;
+    *) echo "ccm: aborted";;
+  esac
+}
+
+cmd_doctor() {
+  local ok=1
+  echo "$(_bold 'claude-multi doctor')"
+  echo
+
+  # 1. claude binary on PATH?
+  if command -v claude >/dev/null 2>&1; then
+    echo "$(_green ✓) claude found: $(command -v claude)"
+  else
+    echo "$(_red ✗) claude not on PATH — install Claude Code first"
+    ok=0
+  fi
+
+  # 2. settings.json has a non-empty env block?
+  if [ -f "$SETTINGS_JSON" ]; then
+    local conflict=0
+    if command -v python3 >/dev/null 2>&1; then
+      python3 - "$SETTINGS_JSON" <<'PY' && conflict=0 || conflict=1
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception as e:
+    print(f"  (could not parse settings.json: {e})")
+    sys.exit(0)
+env = d.get("env") or {}
+if env:
+    print("  conflicting keys:", ", ".join(sorted(env.keys())))
+    sys.exit(1)
+sys.exit(0)
+PY
+    else
+      # Fallback: grep for "env" key with non-empty value
+      grep -qE '"env"[[:space:]]*:[[:space:]]*\{[[:space:]]*"' "$SETTINGS_JSON" && conflict=1
+    fi
+    if [ "$conflict" -eq 1 ]; then
+      echo "$(_yellow ⚠) $SETTINGS_JSON has a non-empty 'env' block."
+      echo "  Those values will $(_bold OVERRIDE) anything ccm sets in the shell."
+      echo "  Fix: in cc-switch, switch to a profile whose 'env' is {} (empty),"
+      echo "       or edit $SETTINGS_JSON and replace the env block with: \"env\": {}"
+      ok=0
+    else
+      echo "$(_green ✓) $SETTINGS_JSON has no 'env' block (shell env will win)"
+    fi
+  else
+    echo "$(_green ✓) no $SETTINGS_JSON (shell env will win)"
+  fi
+
+  # 3. provider files valid?
+  local n=0 bad=0
+  for f in "$CCM_PROVIDERS_DIR"/*.env; do
+    [ -e "$f" ] || continue
+    n=$((n+1))
+    if ! bash -n "$f" 2>/dev/null; then
+      echo "$(_red ✗) syntax error in $f"
+      bad=$((bad+1))
+    fi
+  done
+  if [ "$n" -eq 0 ]; then
+    echo "$(_yellow ⚠) no providers configured — add one with: ccm add <name>"
+  elif [ "$bad" -eq 0 ]; then
+    echo "$(_green ✓) $n provider file(s), all parse cleanly"
+  else
+    ok=0
+  fi
+
+  # 4. active provider in this shell?
+  echo
+  if [ -n "${CCM_ACTIVE_PROVIDER:-}" ]; then
+    echo "$(_bold 'active in this shell:') $CCM_ACTIVE_PROVIDER"
+    echo "  ANTHROPIC_BASE_URL = ${ANTHROPIC_BASE_URL:-<unset>}"
+    echo "  ANTHROPIC_MODEL    = ${ANTHROPIC_MODEL:-<unset>}"
+    echo "  ANTHROPIC_AUTH_TOKEN = $(_mask_token "${ANTHROPIC_AUTH_TOKEN:-}")"
+  else
+    echo "$(_dim 'no provider active in this shell. Use:') ccm use <name>"
+  fi
+
+  [ "$ok" -eq 1 ]
+}
+
+cmd_help() {
+  cat <<'EOF'
+ccm — manage per-terminal Claude Code provider env vars
+
+USAGE
+  ccm use <name>        switch THIS shell to provider <name> (env injected here)
+  ccm unuse             clear shell env (fall back to ~/.claude/settings.json)
+  ccm list              list all providers; mark the one active in this shell
+  ccm which             print the active provider name (exit 1 if none)
+  ccm add [name]        interactively create a new provider .env file
+  ccm edit <name>       open the provider's .env file in $EDITOR
+  ccm rm <name>         delete a provider .env file
+  ccm reload            regenerate claude-<name> functions after add/edit
+  ccm doctor            sanity-check settings.json conflict, paths, parse, etc.
+
+ONE-SHOT ALIASES
+  claude-<name> [args]  run claude with that provider's env in a subshell,
+                        without touching the parent shell's environment.
+                        e.g. `claude-idealab -p "hi"`
+
+CONFIG LOCATION
+  ~/.claude-multi/providers/<name>.env
+
+NOTES
+  - Shell env loses to ~/.claude/settings.json `env` block. Use `ccm doctor`
+    to detect that conflict and fix it via cc-switch.
+EOF
+}
+
+# ---- dispatch ---------------------------------------------------------------
+
+cmd="${1:-help}"
+shift 2>/dev/null || true
+case "$cmd" in
+  list|ls)         cmd_list "$@" ;;
+  which)           cmd_which "$@" ;;
+  add)             cmd_add "$@" ;;
+  edit)            cmd_edit "$@" ;;
+  rm|remove|delete) cmd_rm "$@" ;;
+  doctor)          cmd_doctor "$@" ;;
+  help|--help|-h)  cmd_help ;;
+  use|unuse|reload)
+    echo "ccm: '$cmd' must run as a shell function, not via this script." >&2
+    echo "     Make sure ~/.claude-multi/init.sh is sourced in your shell rc." >&2
+    exit 2
+    ;;
+  *) echo "ccm: unknown command '$cmd' (try 'ccm help')" >&2; exit 2 ;;
+esac
