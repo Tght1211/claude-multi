@@ -33,37 +33,23 @@ _ccm_guard() {
   grep -qE '"env"[[:space:]]*:[[:space:]]*\{' "$CCM_SETTINGS_JSON" 2>/dev/null && \
     grep -qE '"(ANTHROPIC|CLAUDE_CODE)_' "$CCM_SETTINGS_JSON" 2>/dev/null || return 0
 
-  # 确认有冲突 — 但非交互模式下只警告，不阻塞
+  # 确认有冲突 — 非交互模式只警告
   if [ ! -t 0 ]; then
-    echo "⚠️  ccm: settings.json 的 env 块非空，可能会覆盖 ccm 设置" >&2
+    echo "⚠️  settings.json env 非空，可能覆盖 ccm。运行 ccm sync 导入。" >&2
     return 0
   fi
 
   echo
-  echo "  🔔 检测到 settings.json 中有环境变量配置"
-  echo "  ⚠️  这些值会覆盖 ccm 的 shell env，导致供应商切换失效。"
-  echo "  💡 (建议搭配 cc-switch 使用，选一个 env: {} 的 profile)"
-  echo
-  printf '  🔄 是否同步到 ccm 并清空 settings.json env? [Y/n] '
+  echo "  ⚠️  settings.json 中有 env 配置，会覆盖 ccm 的 shell env"
+  printf '  📥 同步到 ccm? [Y/n] '
   local ans
   read -r ans
   case "$ans" in
     ''|y|Y|yes|YES)
       command ccm sync "$@"
       ;;
-    n|N)
-      printf '  🗑️  那是否只清空 settings.json env（不同步）? [y/N] '
-      read -r ans
-      case "$ans" in
-        y|Y|yes|YES)
-          CCM_SETTINGS_JSON="$CCM_SETTINGS_JSON" command ccm sync __ccm_clear_only__
-          ;;
-        *)
-          echo "  ❌ 已取消。ccm 无法正常工作，直到 settings.json env 被清空。" >&2
-          echo "     🛠️  手动修复: 运行 ccm sync 或在 cc-switch 中选 env:{} 的 profile" >&2
-          return 1
-          ;;
-      esac
+    *)
+      echo "  💡 稍后可运行 ccm sync 手动同步"
       ;;
   esac
 }

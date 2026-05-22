@@ -32,19 +32,26 @@ curl -fsSL https://raw.githubusercontent.com/Tght1211/claude-multi/main/install.
 
 ### Step 1：处理 settings.json 冲突
 
-> 🔔 **重要**：`~/.claude/settings.json` 的 `env` 块会**覆盖** shell env。claude-multi 每次启动前会自动检测并提示同步，但你也可以提前处理：
+> 🔔 **重要**：`~/.claude/settings.json` 的 `env` 块会**覆盖** shell env。claude-multi 每次启动前会自动检测并提示同步。
 
+**快速解决**：
+```sh
+ccm sync                # 📥 从 settings.json 导入为 ccm 供应商 (不自动清空)
+ccm sync --clear        # 📥 导入 + 🗑️ 同时清空 settings.json env
+```
+
+**其他方式**：
 | 你的情况 | 怎么做 |
 |---|---|
-| 🔄 已有 cc-switch | 在 cc-switch 中选一个 `"env": {}` 的 profile |
-| 📋 settings.json 里有 env 配置 | 运行 `ccm sync` 一键导入到 ccm 并自动清空 |
-| ✨ 全新用户 | 什么都不用做，`~/.claude/settings.json` 默认没有 env 块 |
+| 🔄 用 cc-switch | 在 cc-switch 配好供应商 → `ccm sync` 导入 → 反复切换同步 |
+| ✨ 全新用户 | 什么都不用做，直接 `ccm add` 或 `ccm preset` 创建供应商 |
 
 ### Step 2：添加你的第一个供应商
 
 **最快方式 — 从 cc-switch / settings.json 同步：**
 ```sh
-ccm sync                # 🔍 自动检测 settings.json 的 env，导入为 ccm 供应商，然后清空 env
+ccm sync                # 📥 从 settings.json 导入为 ccm 供应商
+ccm sync --clear        # 📥 导入 + 🗑️ 清空 settings.json env
 ```
 
 **从模板快速创建：**
@@ -111,15 +118,6 @@ echo $ANTHROPIC_BASE_URL        # 验证
 claude                          # 走 deepseek
 ```
 
-### `ccm sync` —— 一键同步 settings.json 🔧
-
-```sh
-ccm sync                        # 从 settings.json 导入 env → 创建供应商 → 清空 settings.json
-ccm sync my-provider            # 指定供应商名称
-```
-
-> 🛡️ 这是解决 "settings.json 覆盖 shell env" 问题的终极方案。运行一次，永久解决冲突。
-
 ### 管理命令
 
 ```sh
@@ -128,7 +126,7 @@ ccm which                       # 🔍 打印当前供应商名
 ccm add <名称>                  # ➕ 交互式新建 .env
 ccm import [名称] [来源]         # 📥 从 JSON / settings.json 导入
 ccm preset [名称] [供应商]       # 📦 从内置预设创建
-ccm sync [名称]                 # 🔄 同步 settings.json 并清空
+ccm sync [名称] [--clear]       # 🔄 同步 settings.json (--clear 同时清空)
 ccm edit <名称>                 # ✏️  用 $EDITOR 编辑
 ccm rm <名称>                   # 🗑️  删除
 ccm reload                      # 🔃 重新扫描 .env 文件
@@ -148,36 +146,34 @@ ccm sync <TAB>                  # → (供应商名列表)
 
 ## 🛡️ 自动冲突检测（Guard）
 
-**这是 claude-multi 的核心安全机制**：每次运行 `claude-<名称>` 或 `ccm use` 时，会自动检测 `~/.claude/settings.json` 的 `env` 块。
+**每次运行 `claude-<名称>` 或 `ccm use` 时**，会自动检测 `~/.claude/settings.json` 的 `env` 块。
 
 如果检测到冲突：
 ```
-🔔 检测到 settings.json 中有环境变量配置
-⚠️  这些值会覆盖 ccm 的 shell env，导致供应商切换失效。
-💡 (建议搭配 cc-switch 使用，选一个 env: {} 的 profile)
-
-🔄 是否同步到 ccm 并清空 settings.json env? [Y/n]
+⚠️  settings.json 中有 env 配置，会覆盖 ccm 的 shell env
+📥 同步到 ccm? [Y/n]
 ```
 
-- 选 `Y`（默认）→ 自动运行 `ccm sync`，导入为供应商并清空 settings.json
-- 选 `N` → 再问是否只清空不同步
-- 都不选 → 阻止启动，直到手动解决
+- 选 `Y`（默认）→ 运行 `ccm sync` 导入（不清空 settings.json）
+- 选 `N` → 跳过，继续启动（只提醒一次）
 
-> 💨 设 `CCM_NO_GUARD=1` 可跳过检测（用于脚本/CI 等非交互场景）。
+> 💡 想清空 settings.json env？手动运行 `ccm sync --clear`
+> 💨 跳过检测：`CCM_NO_GUARD=1 claude-deepseek`
 
 ---
 
 ## 📥 新增供应商（5 种方式）
 
-### 方式 1：`ccm sync` —— 从 settings.json 一键同步（最推荐 ⭐）
+### 方式 1：`ccm sync` —— 从 settings.json 同步（推荐 ⭐）
 
 如果你已经在 settings.json / cc-switch 里配好了供应商：
 
 ```sh
-ccm sync                # 自动读取 settings.json → 导入 → 清空 env
+ccm sync                # 📥 导入 settings.json env 为供应商
+ccm sync --clear        # 📥 导入 + 🗑️ 清空 settings.json env (cc-switch 用户不推荐)
 ```
 
-一步到位，导入和清空都搞定。
+> 💡 **cc-switch 工作流**：在 cc-switch 配供应商 → `ccm sync mo` 导入 → 切到另一个 cc-switch profile → `ccm sync kimi` 导入 → 反复同步。
 
 ### 方式 2：`ccm preset` —— 内置快捷预设
 
@@ -290,7 +286,8 @@ export ANTHROPIC_DEFAULT_HAIKU_MODEL="kimi-k2.5-turbo-preview"
 **`claude-deepseek` 跑了，但 `claude` 还是走旧供应商？**
 
 🔔 99% 是 `~/.claude/settings.json` 的 `env` 块非空。两个办法：
-- 运行 `ccm sync` 一键同步并清空
+- 运行 `ccm sync` 导入为供应商（推荐）
+- 或运行 `ccm sync --clear` 导入 + 清空 settings.json
 - 或运行 `ccm doctor` 看具体冲突的 key
 
 > 💡 正常情况下 `claude-<名称>` 会自动检测并提示你同步，不需要手动处理。
@@ -327,10 +324,13 @@ CCM_NO_GUARD=1 claude-deepseek     # 单次跳过
 | **claude-multi** | Shell 环境变量（`ANTHROPIC_*`、`CLAUDE_CODE_*`） |
 
 最佳实践：
-1. cc-switch 选一个 `env: {}` 的 profile
-2. 在 cc-switch 里配好供应商（env 写在 profile 里）
-3. 运行 `ccm sync` 把 env 同步到 ccm 并清空 settings.json
-4. 以后直接用 `claude-<名称>` 启动
+1. 在 cc-switch 配好供应商（env 写在 profile 里）
+2. 运行 `ccm sync mo` 把 env 同步到 ccm
+3. 切换到 cc-switch 的另一个 profile
+4. 运行 `ccm sync kimi` 同步另一个供应商
+5. 以后直接用 `claude-mo` / `claude-kimi` 启动
+
+> 💡 不推荐 cc-switch 用户用 `--clear`，因为会清空 settings.json env，影响 cc-switch 切换。
 
 ---
 
