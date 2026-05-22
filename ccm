@@ -569,6 +569,70 @@ cmd_rm() {
   esac
 }
 
+cmd_status() {
+  echo "📊 $(_bold 'ccm 状态')"
+  echo
+
+  # 1. 开关状态
+  if [ -n "${CCM_PROXY_OFFICIAL:-}" ]; then
+    echo "  claude 包装函数:  $(_green '已启用') (CCM_PROXY_OFFICIAL=1)"
+  else
+    echo "  claude 包装函数:  $(_dim '未启用') (设置 CCM_PROXY_OFFICIAL=1 开启)"
+  fi
+
+  # 2. 当前 provider
+  if [ -n "${CCM_ACTIVE_PROVIDER:-}" ]; then
+    echo "  当前终端供应商:  $(_green "$CCM_ACTIVE_PROVIDER")"
+  else
+    echo "  当前终端供应商:  $(_dim '无 (直连 claude)')"
+  fi
+
+  # 3. official.env
+  local official_env="$CCM_PROVIDERS_DIR/official.env"
+  if [ -f "$official_env" ]; then
+    local http_proxy https_proxy socks5_proxy
+    http_proxy="$(_envfile_get "$official_env" HTTP_PROXY)"
+    https_proxy="$(_envfile_get "$official_env" HTTPS_PROXY)"
+    socks5_proxy="$(_envfile_get "$official_env" SOCKS5_PROXY)"
+    echo "  official.env:    $(_green '存在') ($official_env)"
+    [ -n "$http_proxy" ]  && echo "    HTTP_PROXY  = $http_proxy"
+    [ -n "$https_proxy" ] && echo "    HTTPS_PROXY = $https_proxy"
+    [ -n "$socks5_proxy" ] && echo "    SOCKS5_PROXY = $socks5_proxy"
+
+    # 4. 代理端口检测
+    local check_url="${https_proxy:-$http_proxy}"
+    if [ -n "$check_url" ]; then
+      local addr host port
+      addr="${check_url#*://}"
+      host="${addr%%[:/]*}"
+      port="${addr##*:}"
+      port="${port%%/*}"
+      if [ -n "$host" ] && [ -n "$port" ]; then
+        if command -v nc >/dev/null 2>&1 && nc -z -w 2 "$host" "$port" >/dev/null 2>&1; then
+          echo "    端口 $host:$port:  $(_green '可达 ✓')"
+        else
+          echo "    端口 $host:$port:  $(_red '不可达 ✗')  (代理可能未启动)"
+        fi
+      fi
+    fi
+  else
+    echo "  official.env:    $(_dim '不存在') (ccm preset official 创建)"
+  fi
+
+  echo
+
+  # 5. settings.json
+  if [ -f "$SETTINGS_JSON" ]; then
+    if _has_settings_env; then
+      echo "  settings.json:   $(_yellow 'env 非空') (可能覆盖 ccm)"
+    else
+      echo "  settings.json:   $(_green 'env 为空') (shell env 生效)"
+    fi
+  else
+    echo "  settings.json:   $(_dim '不存在')"
+  fi
+}
+
 cmd_doctor() {
   local ok=1
   echo "🏥 $(_bold 'claude-multi 体检')"
@@ -670,6 +734,7 @@ ccm — 按终端窗口管理 Claude Code 供应商环境变量
   ccm rm <名称>         删除供应商 .env 文件
   ccm reload            新增/编辑 .env 后重新生成 claude-<名称> 函数
   ccm doctor            体检: 检测 settings.json 冲突、路径、语法等
+  ccm status            查看当前状态: 开关、provider、代理、端口
 
 内置预设 (ccm preset <预设名> [供应商名])
   official     官方 Claude — 仅代理配置 (直连官方时自动注入)
@@ -724,6 +789,7 @@ case "$cmd" in
   cat|show)        cmd_cat "$@" ;;
   rm|remove|delete) cmd_rm "$@" ;;
   doctor)          cmd_doctor "$@" ;;
+  status|st)       cmd_status "$@" ;;
   help|--help|-h)  cmd_help ;;
   use|unuse|reload)
     echo "ccm: '$cmd' 必须作为 shell 函数运行，不能直接执行脚本。" >&2
