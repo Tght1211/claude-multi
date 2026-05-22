@@ -501,6 +501,47 @@ cmd_edit() {
   "${EDITOR:-vim}" "$f"
 }
 
+cmd_cat() {
+  local name="${1:-}" raw=0
+  case "${2:-}" in --raw|-r) raw=1 ;; esac
+  case "$name" in --raw|-r) raw=1; name="${2:-}" ;; esac
+
+  if [ -z "$name" ]; then
+    echo "用法: ccm cat <供应商名> [--raw]" >&2
+    return 2
+  fi
+  local f="$CCM_PROVIDERS_DIR/$name.env"
+  if [ ! -f "$f" ]; then
+    echo "ccm: 供应商 '$name' 不存在 ($f)" >&2
+    return 1
+  fi
+
+  echo "📄 $name ($f)"
+  echo
+  while IFS= read -r line; do
+    # skip comments and blank lines
+    case "$line" in
+      '#'*|'') continue ;;
+    esac
+    # strip 'export ' prefix
+    local stripped="${line#export }"
+    # split on first =
+    local key="${stripped%%=*}"
+    local val="${stripped#*=}"
+    # strip quotes
+    val="${val#\"}" val="${val%\"}"
+    # mask sensitive fields
+    if [ "$raw" -eq 0 ]; then
+      case "$key" in
+        *TOKEN*|*KEY*|*SECRET*|*PASSWORD*)
+          val="$(_mask_token "$val")"
+          ;;
+      esac
+    fi
+    printf '  %-40s %s\n' "$key" "$val"
+  done < "$f"
+}
+
 cmd_rm() {
   local name="${1:-}"
   if [ -z "$name" ]; then
@@ -617,6 +658,7 @@ ccm — 按终端窗口管理 Claude Code 供应商环境变量
   ccm preset [预设名]   从内置预设输出配置 / 直接创建供应商
       [供应商名]
   ccm edit <名称>       用 $EDITOR 打开供应商的 .env 文件
+  ccm cat <名称>        查看供应商配置 (token 自动脱敏, --raw 显示原文)
   ccm rm <名称>         删除供应商 .env 文件
   ccm reload            新增/编辑 .env 后重新生成 claude-<名称> 函数
   ccm doctor            体检: 检测 settings.json 冲突、路径、语法等
@@ -662,6 +704,7 @@ case "$cmd" in
   sync)            cmd_sync "$@" ;;
   preset)          cmd_preset "$@" ;;
   edit)            cmd_edit "$@" ;;
+  cat|show)        cmd_cat "$@" ;;
   rm|remove|delete) cmd_rm "$@" ;;
   doctor)          cmd_doctor "$@" ;;
   help|--help|-h)  cmd_help ;;
