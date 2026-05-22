@@ -729,6 +729,65 @@ PY
   [ "$ok" -eq 1 ]
 }
 
+cmd_update() {
+  local target="${1:-latest}"
+
+  # 获取当前版本
+  local current_version
+  if [ -d "$CCM_HOME/.git" ]; then
+    current_version="$(git -C "$CCM_HOME" describe --tags --always 2>/dev/null || echo 'unknown')"
+  else
+    echo "ccm: $CCM_HOME 不是 git 仓库，无法更新" >&2
+    echo "     请重新安装: curl -fsSL https://raw.githubusercontent.com/Tght1211/claude-multi/main/install.sh | bash" >&2
+    return 1
+  fi
+
+  echo "当前版本: $(_bold "$current_version")"
+  echo
+
+  # fetch 最新
+  echo "拉取远程更新..."
+  if ! git -C "$CCM_HOME" fetch origin --tags --quiet 2>&1; then
+    echo "ccm: git fetch 失败" >&2
+    return 1
+  fi
+
+  local checkout_ref=""
+  case "$target" in
+    latest|"")
+      checkout_ref="origin/main"
+      echo "目标: 最新版本 (main)"
+      ;;
+    *)
+      # 检查是 tag 还是 branch
+      if git -C "$CCM_HOME" rev-parse "refs/tags/$target" >/dev/null 2>&1; then
+        checkout_ref="refs/tags/$target"
+        echo "目标: 版本 $target"
+      elif git -C "$CCM_HOME" rev-parse "origin/$target" >/dev/null 2>&1; then
+        checkout_ref="origin/$target"
+        echo "目标: 分支 $target"
+      else
+        echo "ccm: 找不到版本或分支 '$target'" >&2
+        echo "     可用版本: $(git -C "$CCM_HOME" tag -l --sort=-v:refname | head -10 | tr '\n' ' ')" >&2
+        return 1
+      fi
+      ;;
+  esac
+
+  # 执行更新
+  if git -C "$CCM_HOME" checkout "$checkout_ref" --quiet 2>&1; then
+    local new_version
+    new_version="$(git -C "$CCM_HOME" describe --tags --always 2>/dev/null || echo "$target")"
+    echo
+    echo "$(_green '✓') 已更新: $current_version → $(_bold "$new_version")"
+    echo
+    echo "运行 $(_bold 'ccm reload') 重新加载函数，或开个新终端生效"
+  else
+    echo "ccm: git checkout 失败" >&2
+    return 1
+  fi
+}
+
 cmd_help() {
   cat <<'EOF'
 ccm — 按终端窗口管理 Claude Code 供应商环境变量
@@ -766,6 +825,7 @@ ccm — 按终端窗口管理 Claude Code 供应商环境变量
   ccm rm <名称>         删除供应商 .env 文件
   ccm reload            新增/编辑 .env 后重新生成 claude-<名称> 函数
   ccm doctor            体检: 检测 settings.json 冲突、路径、语法等
+  ccm update [版本]     更新 ccm (latest / v0.7.0 等)
 
 内置预设 (ccm preset <预设名> [供应商名])
   official     官方 Claude — 仅代理配置 (直连官方时自动注入)
@@ -810,6 +870,7 @@ case "$cmd" in
   rm|remove|delete) cmd_rm "$@" ;;
   doctor)          cmd_doctor "$@" ;;
   status|st)       cmd_status "$@" ;;
+  update)          cmd_update "$@" ;;
   help|--help|-h)  cmd_help ;;
   use|unuse|reload)
     echo "ccm: '$cmd' 必须作为 shell 函数运行，不能直接执行脚本。" >&2
