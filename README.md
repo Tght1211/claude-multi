@@ -187,7 +187,13 @@ claude-kimi                      # 🚀
 
 | 预设名 | 说明 |
 |---|---|
-| `kimi-1m` | 🌙 Kimi K2.5 Turbo — 1M 上下文窗口 |
+| `deepseek` | 🐳 DeepSeek — deepseek-chat |
+| `openrouter` | 🔀 OpenRouter — Claude Sonnet/Opus/Haiku 聚合 |
+| `dashscope` | ☁️ 阿里云百炼 — qwen3.7-max / qwen3.6-plus / qwen3.6-flash |
+| `kimi` | 🌙 Kimi / 月之暗面 — moonshot-v1 系列 |
+| `kimi-1m` | 🌙 Kimi K2.5 Turbo — 1M 上下文 (coding 端点) |
+| `mimo` | 📱 小米 MIMO — mimo-v2.5-pro |
+| `minimax` | 🎵 MiniMax — abab 系列 |
 
 ### 方式 3：`ccm add` —— 交互式 3 个问题
 

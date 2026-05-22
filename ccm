@@ -384,14 +384,20 @@ cmd_preset() {
   if [ -z "$preset" ]; then
     echo "📦 $(_bold '可用预设:')"
     echo
-    echo "  $(_bold 'kimi-1m')      Kimi K2.5 Turbo — 1M 上下文窗口 (coding 端点)"
+    echo "  $(_bold 'deepseek')     DeepSeek — deepseek-chat"
+    echo "  $(_bold 'openrouter')   OpenRouter — Claude Sonnet/Opus/Haiku 聚合"
+    echo "  $(_bold 'dashscope')    阿里云百炼 DashScope — qwen3.7-max / qwen3.6-plus / qwen3.6-flash"
+    echo "  $(_bold 'kimi')         Kimi / 月之暗面 — moonshot-v1 系列"
+    echo "  $(_bold 'kimi-1m')      Kimi K2.5 Turbo — 1M 上下文 (coding 端点)"
+    echo "  $(_bold 'mimo')         小米 MIMO — mimo-v2.5-pro"
+    echo "  $(_bold 'minimax')      MiniMax — abab 系列"
     echo
-    echo "用法: ccm preset <预设名>              # 输出到终端"
-    echo "      ccm preset <预设名> <供应商名>   # 直接创建供应商配置"
+    echo "用法: ccm preset <预设名> [供应商名]"
     echo
     echo "示例:"
-    echo "  ccm preset kimi-1m my-kimi          # 从预设创建 my-kimi.env"
-    echo "  ccm preset kimi-1m | pbcopy         # 复制到剪贴板 (macOS)"
+    echo "  ccm preset deepseek                # 查看配置内容"
+    echo "  ccm preset dashscope ds            # 创建 ds.env"
+    echo "  ccm preset kimi-1m | pbcopy        # 复制到剪贴板"
     return 0
   fi
 
@@ -399,6 +405,38 @@ cmd_preset() {
   local env_block=""
 
   case "$preset" in
+    deepseek)
+      env_block="ANTHROPIC_AUTH_TOKEN=YOUR_DEEPSEEK_KEY_HERE
+ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic
+ANTHROPIC_MODEL=deepseek-chat
+ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-chat
+ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-chat
+ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-chat"
+      ;;
+    openrouter)
+      env_block="ANTHROPIC_AUTH_TOKEN=sk-or-v1-YOUR_OPENROUTER_KEY_HERE
+ANTHROPIC_BASE_URL=https://openrouter.ai/api/anthropic
+ANTHROPIC_MODEL=anthropic/claude-sonnet-4.6
+ANTHROPIC_DEFAULT_SONNET_MODEL=anthropic/claude-sonnet-4.6
+ANTHROPIC_DEFAULT_OPUS_MODEL=anthropic/claude-opus-4.7
+ANTHROPIC_DEFAULT_HAIKU_MODEL=anthropic/claude-haiku-4.5"
+      ;;
+    dashscope)
+      env_block="ANTHROPIC_AUTH_TOKEN=YOUR_DASHSCOPE_KEY_HERE
+ANTHROPIC_BASE_URL=https://dashscope.aliyuncs.com/apps/anthropic
+ANTHROPIC_MODEL=qwen3.6-plus
+ANTHROPIC_DEFAULT_SONNET_MODEL=qwen3.6-plus
+ANTHROPIC_DEFAULT_OPUS_MODEL=qwen3.7-max
+ANTHROPIC_DEFAULT_HAIKU_MODEL=qwen3.6-flash"
+      ;;
+    kimi)
+      env_block="ANTHROPIC_AUTH_TOKEN=YOUR_KIMI_KEY_HERE
+ANTHROPIC_BASE_URL=https://api.moonshot.cn/anthropic
+ANTHROPIC_MODEL=moonshot-v1-32k
+ANTHROPIC_DEFAULT_SONNET_MODEL=moonshot-v1-32k
+ANTHROPIC_DEFAULT_OPUS_MODEL=moonshot-v1-128k
+ANTHROPIC_DEFAULT_HAIKU_MODEL=moonshot-v1-8k"
+      ;;
     kimi-1m|kimi-1M)
       env_block="ANTHROPIC_AUTH_TOKEN=YOUR_KIMI_KEY_HERE
 ANTHROPIC_BASE_URL=https://api.kimi.com/coding/anthropic
@@ -407,6 +445,22 @@ ANTHROPIC_SMALL_FAST_MODEL=kimi-k2.5-turbo-preview
 ANTHROPIC_DEFAULT_SONNET_MODEL=kimi-k2.5-turbo-preview
 ANTHROPIC_DEFAULT_OPUS_MODEL=kimi-k2.5-turbo-preview
 ANTHROPIC_DEFAULT_HAIKU_MODEL=kimi-k2.5-turbo-preview"
+      ;;
+    mimo)
+      env_block="ANTHROPIC_AUTH_TOKEN=YOUR_MIMO_KEY_HERE
+ANTHROPIC_BASE_URL=https://token-plan-cn.xiaomimimo.com/anthropic
+ANTHROPIC_MODEL=mimo-v2.5-pro
+ANTHROPIC_DEFAULT_SONNET_MODEL=mimo-v2.5-pro
+ANTHROPIC_DEFAULT_OPUS_MODEL=mimo-v2.5-pro
+ANTHROPIC_DEFAULT_HAIKU_MODEL=mimo-v2.5-pro"
+      ;;
+    minimax)
+      env_block="ANTHROPIC_AUTH_TOKEN=YOUR_MINIMAX_KEY_HERE
+ANTHROPIC_BASE_URL=https://api.minimax.chat/anthropic
+ANTHROPIC_MODEL=abab6.5-chat
+ANTHROPIC_DEFAULT_SONNET_MODEL=abab6.5-chat
+ANTHROPIC_DEFAULT_OPUS_MODEL=abab6.5-chat
+ANTHROPIC_DEFAULT_HAIKU_MODEL=abab5.5-chat"
       ;;
     *)
       echo "ccm: 未知预设 '$preset'" >&2
