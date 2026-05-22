@@ -695,6 +695,7 @@ ccm — 按终端窗口管理 Claude Code 供应商环境变量
   claude-dashscope -p "hi"         # 一次性提问
 
 环境变量
+  CCM_PROXY_OFFICIAL   设为 1 启用 claude 包装函数 (直连官方自动注入代理)
   CCM_PROXY            预设 official 的代理地址 (跳过交互式输入)
   CCM_NO_PROXY_CHECK   设为 1 跳过 claude 启动时的代理端口检测
   CCM_NO_GUARD         设为 1 跳过 settings.json 冲突检测

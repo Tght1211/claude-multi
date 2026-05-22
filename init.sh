@@ -178,9 +178,11 @@ _ccm_check_proxy() {
 }
 
 # ---- claude wrapper: 直连官方时自动注入代理 -------------------------
+# 默认不启用。设置 CCM_PROXY_OFFICIAL=1 后生效。
 # 仅在无 CCM_ACTIVE_PROVIDER 时生效，从 official.env 读取代理配置。
 # 使用子 shell 隔离代理变量，不影响当前 shell 环境。
 # 有 provider 激活时直接透传，代理不参与。
+if [ -n "${CCM_PROXY_OFFICIAL:-}" ]; then
 claude() {
   if [ -n "${CCM_ACTIVE_PROVIDER:-}" ]; then
     command claude "$@"
@@ -220,3 +222,4 @@ claude() {
     command claude "$@"
   fi
 }
+fi
