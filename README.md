@@ -192,7 +192,6 @@ claude-kimi                      # 🚀
 | 预设名 | 说明 |
 |---|---|
 | `kimi-1m` | 🌙 Kimi K2.5 Turbo — 1M 上下文窗口 |
-| `idealab` | 🏢 阿里 idealab — Claude Opus 4.7 代理 |
 
 ### 方式 3：`ccm add` —— 交互式 3 个问题
 

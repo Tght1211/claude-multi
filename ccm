@@ -116,7 +116,6 @@ _suggest_name() {
     *minimax*)             echo "minimax" ;;
     *mimo*|*xiaomi*)       echo "mimo" ;;
     *dashscope*)           echo "dashscope" ;;
-    *idealab*)             echo "idealab" ;;
     *)                     echo "" ;;
   esac
 }
@@ -442,7 +441,6 @@ cmd_preset() {
     echo "📦 $(_bold '可用预设:')"
     echo
     echo "  $(_bold 'kimi-1m')      Kimi K2.5 Turbo — 1M 上下文窗口 (coding 端点)"
-    echo "  $(_bold 'idealab')      阿里 idealab — Claude Opus 4.7 代理"
     echo
     echo "用法: ccm preset <预设名>              # 输出到终端"
     echo "      ccm preset <预设名> <供应商名>   # 直接创建供应商配置"
@@ -465,17 +463,6 @@ ANTHROPIC_SMALL_FAST_MODEL=kimi-k2.5-turbo-preview
 ANTHROPIC_DEFAULT_SONNET_MODEL=kimi-k2.5-turbo-preview
 ANTHROPIC_DEFAULT_OPUS_MODEL=kimi-k2.5-turbo-preview
 ANTHROPIC_DEFAULT_HAIKU_MODEL=kimi-k2.5-turbo-preview"
-      ;;
-    idealab)
-      env_block="ANTHROPIC_AUTH_TOKEN=YOUR_IDEALAB_TOKEN_HERE
-ANTHROPIC_BASE_URL=https://idealab.alibaba-inc.com/api/anthropic
-ANTHROPIC_MODEL=claude-opus-4-7
-ANTHROPIC_DEFAULT_SONNET_MODEL=claude-opus-4-7
-ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-7
-ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-opus-4-7
-ANTHROPIC_DEFAULT_SONNET_MODEL_NAME=claude-opus-4-7
-ANTHROPIC_DEFAULT_OPUS_MODEL_NAME=claude-opus-4-7
-ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME=claude-opus-4-7"
       ;;
     *)
       echo "ccm: 未知预设 '$preset'" >&2
