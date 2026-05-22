@@ -770,7 +770,7 @@ ccm — 按终端窗口管理 Claude Code 供应商环境变量
 
 提示
   - 搭配 cc-switch: cc-switch 配供应商 → ccm sync 导入 → 反复切换同步
-  - 非 cc-switch 用户: cc-switch 中选一个 env:{} 的 profile 即可
+  - 非 cc-switch 用户: 直接用 ccm add / ccm preset 管理供应商，用 ccm use 切换即可
 EOF
 }
 
