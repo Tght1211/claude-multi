@@ -103,8 +103,8 @@ cat <<EOF
   1. 开个新终端，或运行：  $(printf '\033[1msource %s\033[0m' "$rc")
   2. 体检：               $(printf '\033[1mccm doctor\033[0m')
      （它会检测 ~/.claude/settings.json 的 env 块是否会覆盖 shell env）
-  3. 新建第一个供应商：    $(printf '\033[1mccm add idealab\033[0m')
-  4. 使用：               $(printf '\033[1mclaude-idealab\033[0m')  或  $(printf '\033[1mccm use idealab && claude\033[0m')
+  3. 新建第一个供应商：    $(printf '\033[1mccm add deepseek\033[0m')
+  4. 使用：               $(printf '\033[1mclaude-deepseek\033[0m')  或  $(printf '\033[1mccm use deepseek && claude\033[0m')
 
 文档：https://github.com/Tght1211/claude-multi
 EOF

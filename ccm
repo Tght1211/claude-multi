@@ -7,7 +7,7 @@ set -u
 
 CCM_HOME="${CCM_HOME:-$HOME/.claude-multi}"
 CCM_PROVIDERS_DIR="${CCM_PROVIDERS_DIR:-$CCM_HOME/providers}"
-SETTINGS_JSON="$HOME/.claude/settings.json"
+SETTINGS_JSON="${CCM_SETTINGS_JSON:-$HOME/.claude/settings.json}"
 
 # ---- helpers ----------------------------------------------------------------
 
@@ -58,15 +58,165 @@ _envfile_get() {
   ' "$file" 2>/dev/null
 }
 
+# ---- JSON parsing (python3 with awk fallback) -------------------------------
+
+# Check if settings.json has a non-empty env block.
+# Returns 0 (true) if env has values, 1 (false) if empty or missing.
+_has_settings_env() {
+  [ -f "$SETTINGS_JSON" ] || return 1
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    env = d.get('env') or {}
+    sys.exit(0 if env else 1)
+except SystemExit:
+    raise
+except Exception:
+    sys.exit(1)
+" "$SETTINGS_JSON" 2>/dev/null
+  else
+    # 简化 grep: 只要 "env" 键存在且对应一个非空对象
+    # 格式化的 JSON: "env": {\n    "KEY"   →  分两行匹配
+    # 紧凑的 JSON:  "env":{"KEY"            →  同一行匹配
+    grep -q '"env"' "$SETTINGS_JSON" 2>/dev/null && \
+      grep -qE '"env"[[:space:]]*:[[:space:]]*\{' "$SETTINGS_JSON" 2>/dev/null && \
+      grep -qE '"(ANTHROPIC|CLAUDE_CODE)_' "$SETTINGS_JSON" 2>/dev/null
+  fi
+}
+
+# Clear the env block in settings.json to {} (non-destructive: preserves all other keys).
+_clear_settings_env() {
+  [ -f "$SETTINGS_JSON" ] || return 0
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "
+import json, sys
+path = sys.argv[1]
+with open(path) as f:
+    d = json.load(f)
+d['env'] = {}
+with open(path, 'w') as f:
+    json.dump(d, f, indent=2, ensure_ascii=False)
+    f.write('\n')
+" "$SETTINGS_JSON"
+  else
+    echo "ccm: 需要 python3 来修改 settings.json" >&2
+    return 1
+  fi
+}
+
+# Suggest a provider name from a BASE_URL string.
+_suggest_name() {
+  local url="$1"
+  case "$url" in
+    *openrouter*)          echo "openrouter" ;;
+    *deepseek*)            echo "deepseek" ;;
+    *moonshot*|*kimi*)     echo "kimi" ;;
+    *minimax*)             echo "minimax" ;;
+    *mimo*|*xiaomi*)       echo "mimo" ;;
+    *dashscope*)           echo "dashscope" ;;
+    *idealab*)             echo "idealab" ;;
+    *)                     echo "" ;;
+  esac
+}
+
+# Extract key=value pairs from a JSON "env" block.
+# Input: JSON text on stdin.  Output: KEY=VALUE lines (no quotes).
+_json_extract_env() {
+  # Read stdin into a variable first (heredoc would steal stdin from python3)
+  local _json_text
+  _json_text="$(cat)"
+
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c '
+import json, sys, re
+
+text = sys.argv[1]
+
+env = None
+try:
+    d = json.loads(text)
+    if isinstance(d, dict):
+        env = d.get("env") or d
+        if not isinstance(env, dict):
+            env = d
+except Exception:
+    m = re.search(r'"'"'"env"\s*:\s*(\{[^}]*(?:\{[^}]*\}[^}]*)*\})'"'"', text, re.S)
+    if m:
+        try:
+            env = json.loads(m.group(1))
+        except Exception:
+            pass
+
+if not env or not isinstance(env, dict):
+    print("ccm: 找不到有效的 JSON env 对象", file=sys.stderr)
+    sys.exit(1)
+
+for k, v in sorted(env.items()):
+    if isinstance(v, str):
+        print(f"{k}={v}")
+' "$_json_text"
+  else
+    # Awk fallback — fragile but better than nothing
+    echo "$_json_text" | awk '
+      /"env"/ { in_env=1; next }
+      in_env && /\}/ { exit }
+      in_env && /"[A-Z_]+"/ {
+        match($0, /"([A-Za-z0-9_]+)"[[:space:]]*:[[:space:]]*"([^"]*)"/, m)
+        if (m[1] != "") print m[1] "=" m[2]
+      }
+    '
+  fi
+}
+
+# Convert KEY=VALUE lines into a provider .env file.
+# $1 = provider name, $2 = source description (for the comment line)
+_write_env_file() {
+  local name="$1" source_desc="$2"
+  local f="$CCM_PROVIDERS_DIR/$name.env"
+
+  if [ -e "$f" ]; then
+    echo "ccm: $f 已存在 (先用 'ccm edit $name' 或 'ccm rm $name')" >&2
+    return 1
+  fi
+
+  mkdir -p "$CCM_PROVIDERS_DIR"
+  echo "# Provider: $name (从 $source_desc 导入, $(date +%Y-%m-%d))" > "$f"
+
+  local found_real_token=0
+  while IFS='=' read -r key value; do
+    [ -z "$key" ] && continue
+    case "$key" in
+      ANTHROPIC_*|CLAUDE_CODE_*) ;;
+      *) continue ;;
+    esac
+    echo "export ${key}=\"${value}\"" >> "$f"
+    # Only warn about token if it looks like a real key (not a placeholder)
+    if [ "$key" = "ANTHROPIC_AUTH_TOKEN" ]; then
+      case "$value" in
+        *YOUR_*|*HERE|*PLACEHOLDER*|"") ;;
+        *) found_real_token=1 ;;
+      esac
+    fi
+  done
+
+  echo "ccm: 📝 已写入 $f" >&2
+  if [ "$found_real_token" -eq 1 ]; then
+    echo "ccm: ⚠️  $(_yellow '已导入 token — 请确保 settings.json 的 env 块已清空，避免冲突')" >&2
+  fi
+  echo "ccm: 🚀 运行 '$(_bold ccm reload)' (或开新终端) 注册 $(_bold "claude-$name")" >&2
+}
+
 # ---- subcommands ------------------------------------------------------------
 
 cmd_list() {
   if [ ! -d "$CCM_PROVIDERS_DIR" ] || [ -z "$(_list_providers)" ]; then
-    echo "No providers configured yet. Add one with: ccm add <name>"
+    echo "📭 还没有配置任何供应商。运行 ccm add <名称> 添加一个"
     return 0
   fi
   local active="${CCM_ACTIVE_PROVIDER:-}"
-  printf '%-20s %-55s %s\n' "PROVIDER" "BASE_URL" "MODEL"
+  printf '%-20s %-55s %s\n' "供应商" "BASE_URL" "模型"
   printf '%-20s %-55s %s\n' "--------" "--------" "-----"
   for name in $(_list_providers); do
     local f="$CCM_PROVIDERS_DIR/$name.env"
@@ -82,10 +232,10 @@ cmd_list() {
   done
   if [ -n "$active" ]; then
     echo
-    echo "$(_green '✓') active in this shell: $(_bold "$active")"
+    echo "$(_green '✓') 当前终端激活: $(_bold "$active")"
   else
     echo
-    echo "$(_dim 'no provider active in this shell — claude will use ~/.claude/settings.json')"
+    echo "$(_dim '当前终端没有激活供应商 — claude 将使用 ~/.claude/settings.json')"
   fi
 }
 
@@ -93,7 +243,7 @@ cmd_which() {
   if [ -n "${CCM_ACTIVE_PROVIDER:-}" ]; then
     echo "$CCM_ACTIVE_PROVIDER"
   else
-    echo "<none, falling back to ~/.claude/settings.json>"
+    echo "<未激活，回退到 ~/.claude/settings.json>"
     return 1
   fi
 }
@@ -101,18 +251,18 @@ cmd_which() {
 cmd_add() {
   local name="${1:-}"
   if [ -z "$name" ]; then
-    printf 'Provider name (e.g. deepseek, kimi): '
+    printf '供应商名称 (如 deepseek, kimi): '
     read -r name
   fi
   case "$name" in
     *[!a-zA-Z0-9_-]*|'')
-      echo "ccm: invalid name '$name' (allowed: letters, digits, _ -)" >&2
+      echo "ccm: 无效名称 '$name' (只允许字母、数字、_ -)" >&2
       return 2
       ;;
   esac
   local f="$CCM_PROVIDERS_DIR/$name.env"
   if [ -e "$f" ]; then
-    echo "ccm: $f already exists (use 'ccm edit $name')" >&2
+    echo "ccm: $f 已存在 (用 'ccm edit $name' 编辑)" >&2
     return 1
   fi
   local base_url auth_token model
@@ -121,7 +271,7 @@ cmd_add() {
   printf 'ANTHROPIC_MODEL     : '; read -r model
   mkdir -p "$CCM_PROVIDERS_DIR"
   {
-    echo "# Provider: $name (created by ccm add on $(date +%Y-%m-%d))"
+    echo "# Provider: $name (ccm add 创建于 $(date +%Y-%m-%d))"
     echo "export ANTHROPIC_AUTH_TOKEN=\"$auth_token\""
     echo "export ANTHROPIC_BASE_URL=\"$base_url\""
     echo "export ANTHROPIC_MODEL=\"$model\""
@@ -129,19 +279,238 @@ cmd_add() {
     echo "export ANTHROPIC_DEFAULT_OPUS_MODEL=\"$model\""
     echo "export ANTHROPIC_DEFAULT_SONNET_MODEL=\"$model\""
   } > "$f"
-  echo "ccm: wrote $f"
-  echo "ccm: run '$(_bold ccm reload)' (or open a new shell) to register $(_bold "claude-$name")"
+  echo "ccm: 📝 已写入 $f"
+  echo "ccm: 🚀 运行 '$(_bold ccm reload)' (或开新终端) 注册 $(_bold "claude-$name")"
+}
+
+cmd_import() {
+  local name="${1:-}"
+  local source="${2:-}"
+
+  # ---- read JSON input ----
+  local json_input=""
+  if [ "$source" = "-" ] || { [ -z "$source" ] && [ ! -t 0 ]; }; then
+    json_input="$(cat)"
+    source="<stdin>"
+  elif [ -n "$source" ] && [ -f "$source" ]; then
+    json_input="$(cat "$source")"
+  elif [ -n "$source" ]; then
+    json_input="$source"
+    source="<参数>"
+  elif [ -f "$SETTINGS_JSON" ]; then
+    json_input="$(cat "$SETTINGS_JSON")"
+    source="$SETTINGS_JSON"
+    echo "$(_bold '自动检测到:') $SETTINGS_JSON"
+  else
+    echo "ccm import: 没有输入" >&2
+    echo "用法: ccm import [名称] [file.json | '{...}' | -]" >&2
+    echo "      cat config.json | ccm import [名称]" >&2
+    return 2
+  fi
+
+  # ---- parse JSON → KEY=VALUE ----
+  local parsed
+  parsed="$(echo "$json_input" | _json_extract_env)" || return 1
+  if [ -z "$parsed" ]; then
+    echo "ccm: 输入中未找到 ANTHROPIC_*/CLAUDE_CODE_* 变量" >&2
+    return 1
+  fi
+
+  # ---- show what we found ----
+  echo
+  echo "$(_bold '解析到以下环境变量:')"
+  echo "$parsed" | while IFS='=' read -r key value; do
+    case "$key" in
+      ANTHROPIC_*|CLAUDE_CODE_*) ;;
+      *) continue ;;
+    esac
+    if [ "$key" = "ANTHROPIC_AUTH_TOKEN" ]; then
+      echo "  $(_bold "$key") = $(_mask_token "$value")"
+    else
+      echo "  $(_bold "$key") = $value"
+    fi
+  done
+  echo
+
+  # ---- ask for provider name if not given ----
+  if [ -z "$name" ]; then
+    local base_url suggested=""
+    base_url="$(echo "$parsed" | grep '^ANTHROPIC_BASE_URL=' | head -1 | cut -d= -f2-)"
+    suggested="$(_suggest_name "$base_url")"
+    if [ -n "$suggested" ]; then
+      printf "供应商名称 [%s]: " "$suggested"
+      read -r name
+      name="${name:-$suggested}"
+    else
+      printf '供应商名称 (如 deepseek, kimi): '
+      read -r name
+    fi
+  fi
+
+  case "$name" in
+    *[!a-zA-Z0-9_-]*|'')
+      echo "ccm: 无效名称 '$name'" >&2
+      return 2
+      ;;
+  esac
+
+  # ---- write the .env file ----
+  echo "$parsed" | _write_env_file "$name" "$source"
+}
+
+cmd_sync() {
+  local name="${1:-}"
+
+  # 特殊模式: 只清空 settings.json env，不导入
+  if [ "$name" = "__ccm_clear_only__" ]; then
+    if _clear_settings_env; then
+      echo "ccm: ✅ 已清空 settings.json 的 env 块"
+    else
+      echo "ccm: ❌ 清空 settings.json 失败" >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  if ! _has_settings_env; then
+    echo "✅ ccm: $SETTINGS_JSON 的 env 块已经为空，无需同步"
+    return 0
+  fi
+
+  # Read and parse settings.json
+  local json_input parsed
+  json_input="$(cat "$SETTINGS_JSON")"
+  parsed="$(echo "$json_input" | _json_extract_env)" || return 1
+  if [ -z "$parsed" ]; then
+    echo "ccm: settings.json 中没有找到 ANTHROPIC_*/CLAUDE_CODE_* 变量"
+    return 1
+  fi
+
+  # Show what we found
+  echo
+  echo "$(_bold '从 settings.json 解析到以下环境变量:')"
+  echo "$parsed" | while IFS='=' read -r key value; do
+    case "$key" in
+      ANTHROPIC_*|CLAUDE_CODE_*) ;;
+      *) continue ;;
+    esac
+    if [ "$key" = "ANTHROPIC_AUTH_TOKEN" ]; then
+      echo "  $(_bold "$key") = $(_mask_token "$value")"
+    else
+      echo "  $(_bold "$key") = $value"
+    fi
+  done
+  echo
+
+  # Ask for provider name
+  if [ -z "$name" ]; then
+    local base_url suggested=""
+    base_url="$(echo "$parsed" | grep '^ANTHROPIC_BASE_URL=' | head -1 | cut -d= -f2-)"
+    suggested="$(_suggest_name "$base_url")"
+    if [ -n "$suggested" ]; then
+      printf "供应商名称 [%s]: " "$suggested"
+      read -r name
+      name="${name:-$suggested}"
+    else
+      printf '供应商名称 (如 deepseek, kimi): '
+      read -r name
+    fi
+  fi
+
+  case "$name" in
+    *[!a-zA-Z0-9_-]*|'')
+      echo "ccm: 无效名称 '$name'" >&2
+      return 2
+      ;;
+  esac
+
+  # Write .env file
+  echo "$parsed" | _write_env_file "$name" "$SETTINGS_JSON" || return 1
+
+  # Clear settings.json env
+  if _clear_settings_env; then
+    echo "ccm: ✅ 已清空 settings.json 的 env 块 (现在 ccm 的 shell env 会生效)"
+  else
+    echo "ccm: ❌ 清空 settings.json 失败，请手动将 env 改为 {}" >&2
+    return 1
+  fi
+}
+
+cmd_preset() {
+  local preset="${1:-}"
+  if [ -z "$preset" ]; then
+    echo "📦 $(_bold '可用预设:')"
+    echo
+    echo "  $(_bold 'kimi-1m')      Kimi K2.5 Turbo — 1M 上下文窗口 (coding 端点)"
+    echo "  $(_bold 'idealab')      阿里 idealab — Claude Opus 4.7 代理"
+    echo
+    echo "用法: ccm preset <预设名>              # 输出到终端"
+    echo "      ccm preset <预设名> <供应商名>   # 直接创建供应商配置"
+    echo
+    echo "示例:"
+    echo "  ccm preset kimi-1m my-kimi          # 从预设创建 my-kimi.env"
+    echo "  ccm preset kimi-1m | pbcopy         # 复制到剪贴板 (macOS)"
+    return 0
+  fi
+
+  local name="${2:-}"
+  local env_block=""
+
+  case "$preset" in
+    kimi-1m|kimi-1M)
+      env_block="ANTHROPIC_AUTH_TOKEN=YOUR_KIMI_KEY_HERE
+ANTHROPIC_BASE_URL=https://api.kimi.com/coding/anthropic
+ANTHROPIC_MODEL=kimi-k2.5-turbo-preview
+ANTHROPIC_SMALL_FAST_MODEL=kimi-k2.5-turbo-preview
+ANTHROPIC_DEFAULT_SONNET_MODEL=kimi-k2.5-turbo-preview
+ANTHROPIC_DEFAULT_OPUS_MODEL=kimi-k2.5-turbo-preview
+ANTHROPIC_DEFAULT_HAIKU_MODEL=kimi-k2.5-turbo-preview"
+      ;;
+    idealab)
+      env_block="ANTHROPIC_AUTH_TOKEN=YOUR_IDEALAB_TOKEN_HERE
+ANTHROPIC_BASE_URL=https://idealab.alibaba-inc.com/api/anthropic
+ANTHROPIC_MODEL=claude-opus-4-7
+ANTHROPIC_DEFAULT_SONNET_MODEL=claude-opus-4-7
+ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-7
+ANTHROPIC_DEFAULT_HAIKU_MODEL=claude-opus-4-7
+ANTHROPIC_DEFAULT_SONNET_MODEL_NAME=claude-opus-4-7
+ANTHROPIC_DEFAULT_OPUS_MODEL_NAME=claude-opus-4-7
+ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME=claude-opus-4-7"
+      ;;
+    *)
+      echo "ccm: 未知预设 '$preset'" >&2
+      echo "运行 '$(_bold ccm preset)' 查看可用预设" >&2
+      return 1
+      ;;
+  esac
+
+  # If a provider name is given, write directly as a .env file
+  if [ -n "$name" ]; then
+    case "$name" in
+      *[!a-zA-Z0-9_-]*)
+        echo "ccm: 无效名称 '$name'" >&2
+        return 2
+        ;;
+    esac
+    echo "$env_block" | _write_env_file "$name" "preset:$preset"
+    return $?
+  fi
+
+  # Otherwise, print to stdout (for copy-paste into settings.json)
+  echo "$env_block" | while IFS='=' read -r key value; do
+    echo "export ${key}=\"${value}\""
+  done
 }
 
 cmd_edit() {
   local name="${1:-}"
   if [ -z "$name" ]; then
-    echo "usage: ccm edit <provider>" >&2
+    echo "用法: ccm edit <供应商名>" >&2
     return 2
   fi
   local f="$CCM_PROVIDERS_DIR/$name.env"
   if [ ! -f "$f" ]; then
-    echo "ccm: provider '$name' not found ($f)" >&2
+    echo "ccm: 供应商 '$name' 不存在 ($f)" >&2
     return 1
   fi
   "${EDITOR:-vim}" "$f"
@@ -150,32 +519,32 @@ cmd_edit() {
 cmd_rm() {
   local name="${1:-}"
   if [ -z "$name" ]; then
-    echo "usage: ccm rm <provider>" >&2
+    echo "用法: ccm rm <供应商名>" >&2
     return 2
   fi
   local f="$CCM_PROVIDERS_DIR/$name.env"
   if [ ! -f "$f" ]; then
-    echo "ccm: provider '$name' not found ($f)" >&2
+    echo "ccm: 供应商 '$name' 不存在 ($f)" >&2
     return 1
   fi
-  printf 'Delete %s? [y/N] ' "$f"
+  printf '确认删除 %s? [y/N] ' "$f"
   local ans; read -r ans
   case "$ans" in
-    y|Y|yes|YES) rm "$f" && echo "ccm: removed $f";;
-    *) echo "ccm: aborted";;
+    y|Y|yes|YES) rm "$f" && echo "ccm: 🗑️  已删除 $f";;
+    *) echo "ccm: 已取消";;
   esac
 }
 
 cmd_doctor() {
   local ok=1
-  echo "$(_bold 'claude-multi doctor')"
+  echo "🏥 $(_bold 'claude-multi 体检')"
   echo
 
   # 1. claude binary on PATH?
   if command -v claude >/dev/null 2>&1; then
-    echo "$(_green ✓) claude found: $(command -v claude)"
+    echo "  ✅ 找到 claude: $(command -v claude)"
   else
-    echo "$(_red ✗) claude not on PATH — install Claude Code first"
+    echo "  ❌ 未找到 claude — 请先安装 Claude Code"
     ok=0
   fi
 
@@ -188,29 +557,30 @@ import json, sys
 try:
     d = json.load(open(sys.argv[1]))
 except Exception as e:
-    print(f"  (could not parse settings.json: {e})")
+    print(f"  (无法解析 settings.json: {e})")
     sys.exit(0)
 env = d.get("env") or {}
 if env:
-    print("  conflicting keys:", ", ".join(sorted(env.keys())))
+    print("  冲突的 key:", ", ".join(sorted(env.keys())))
     sys.exit(1)
 sys.exit(0)
 PY
     else
-      # Fallback: grep for "env" key with non-empty value
-      grep -qE '"env"[[:space:]]*:[[:space:]]*\{[[:space:]]*"' "$SETTINGS_JSON" && conflict=1
+      grep -q '"env"' "$SETTINGS_JSON" 2>/dev/null && \
+        grep -qE '"env"[[:space:]]*:[[:space:]]*\{' "$SETTINGS_JSON" 2>/dev/null && \
+        grep -qE '"(ANTHROPIC|CLAUDE_CODE)_' "$SETTINGS_JSON" 2>/dev/null && conflict=1
     fi
     if [ "$conflict" -eq 1 ]; then
-      echo "$(_yellow ⚠) $SETTINGS_JSON has a non-empty 'env' block."
-      echo "  Those values will $(_bold OVERRIDE) anything ccm sets in the shell."
-      echo "  Fix: in cc-switch, switch to a profile whose 'env' is {} (empty),"
-      echo "       or edit $SETTINGS_JSON and replace the env block with: \"env\": {}"
+      echo "  ⚠️  $SETTINGS_JSON 的 'env' 块非空。"
+      echo "      这些值会 $(_bold 覆盖) ccm 在 shell 中设置的任何内容。"
+      echo "      🛠️  修复: 运行 ccm sync 自动同步并清空，"
+      echo "              或在 cc-switch 中切换到 'env' 为 {} 的 profile"
       ok=0
     else
-      echo "$(_green ✓) $SETTINGS_JSON has no 'env' block (shell env will win)"
+      echo "  ✅ $SETTINGS_JSON 没有 'env' 块 (shell env 会生效)"
     fi
   else
-    echo "$(_green ✓) no $SETTINGS_JSON (shell env will win)"
+    echo "  ✅ 没有 $SETTINGS_JSON (shell env 会生效)"
   fi
 
   # 3. provider files valid?
@@ -219,14 +589,14 @@ PY
     [ -e "$f" ] || continue
     n=$((n+1))
     if ! bash -n "$f" 2>/dev/null; then
-      echo "$(_red ✗) syntax error in $f"
+      echo "  ❌ $f 有语法错误"
       bad=$((bad+1))
     fi
   done
   if [ "$n" -eq 0 ]; then
-    echo "$(_yellow ⚠) no providers configured — add one with: ccm add <name>"
+    echo "  ⚠️  还没有配置供应商 — 用 ccm add <名称> 添加"
   elif [ "$bad" -eq 0 ]; then
-    echo "$(_green ✓) $n provider file(s), all parse cleanly"
+    echo "  ✅ $n 个供应商文件，语法全部正常"
   else
     ok=0
   fi
@@ -234,12 +604,12 @@ PY
   # 4. active provider in this shell?
   echo
   if [ -n "${CCM_ACTIVE_PROVIDER:-}" ]; then
-    echo "$(_bold 'active in this shell:') $CCM_ACTIVE_PROVIDER"
-    echo "  ANTHROPIC_BASE_URL = ${ANTHROPIC_BASE_URL:-<unset>}"
-    echo "  ANTHROPIC_MODEL    = ${ANTHROPIC_MODEL:-<unset>}"
+    echo "  🟢 $(_bold '当前终端激活:') $CCM_ACTIVE_PROVIDER"
+    echo "  ANTHROPIC_BASE_URL = ${ANTHROPIC_BASE_URL:-<未设置>}"
+    echo "  ANTHROPIC_MODEL    = ${ANTHROPIC_MODEL:-<未设置>}"
     echo "  ANTHROPIC_AUTH_TOKEN = $(_mask_token "${ANTHROPIC_AUTH_TOKEN:-}")"
   else
-    echo "$(_dim 'no provider active in this shell. Use:') ccm use <name>"
+    echo "$(_dim '当前终端没有激活供应商。使用:') ccm use <名称>"
   fi
 
   [ "$ok" -eq 1 ]
@@ -247,30 +617,36 @@ PY
 
 cmd_help() {
   cat <<'EOF'
-ccm — manage per-terminal Claude Code provider env vars
+ccm — 按终端窗口管理 Claude Code 供应商环境变量
 
-USAGE
-  ccm use <name>        switch THIS shell to provider <name> (env injected here)
-  ccm unuse             clear shell env (fall back to ~/.claude/settings.json)
-  ccm list              list all providers; mark the one active in this shell
-  ccm which             print the active provider name (exit 1 if none)
-  ccm add [name]        interactively create a new provider .env file
-  ccm edit <name>       open the provider's .env file in $EDITOR
-  ccm rm <name>         delete a provider .env file
-  ccm reload            regenerate claude-<name> functions after add/edit
-  ccm doctor            sanity-check settings.json conflict, paths, parse, etc.
+用法
+  ccm use <名称>        把当前终端切到指定供应商 (env 注入当前 shell)
+  ccm unuse             清除当前终端的 env (回退到 ~/.claude/settings.json)
+  ccm list              列出所有供应商，✓ 标记当前终端在用的
+  ccm which             打印当前终端的供应商名称
+  ccm sync [名称]       从 settings.json 导入 env 为供应商，然后清空 settings.json env
+  ccm add [名称]        交互式创建供应商 .env 文件
+  ccm import [名称]     从 cc-switch settings.json、JSON 字符串或 stdin 导入
+      [文件|json|-]     不指定来源时自动读取 ~/.claude/settings.json
+  ccm preset [预设名]   查看预设列表，或从内置预设输出/创建供应商
+      [供应商名]
+  ccm edit <名称>       用 $EDITOR 打开供应商的 .env 文件
+  ccm rm <名称>         删除供应商 .env 文件
+  ccm reload            新增/编辑 .env 后重新生成 claude-<名称> 函数
+  ccm doctor            体检: 检测 settings.json 冲突、路径、语法等
 
-ONE-SHOT ALIASES
-  claude-<name> [args]  run claude with that provider's env in a subshell,
-                        without touching the parent shell's environment.
-                        e.g. `claude-idealab -p "hi"`
+快捷别名
+  claude-<名称> [参数]  用指定供应商的 env 启动 claude (子 shell，不影响父 shell)
+                        每次启动前自动检测 settings.json 冲突并提示同步
+                        例如: `claude-deepseek -p "hi"`
 
-CONFIG LOCATION
-  ~/.claude-multi/providers/<name>.env
+配置目录
+  ~/.claude-multi/providers/<名称>.env
 
-NOTES
-  - Shell env loses to ~/.claude/settings.json `env` block. Use `ccm doctor`
-    to detect that conflict and fix it via cc-switch.
+注意
+  - Shell env 会被 ~/.claude/settings.json 的 `env` 块覆盖。
+    claude-<名称> 启动前会自动检测并提示同步，也可手动运行 `ccm sync`。
+  - 建议搭配 cc-switch 使用: 在 cc-switch 中选一个 env: {} 的 profile。
 EOF
 }
 
@@ -282,14 +658,17 @@ case "$cmd" in
   list|ls)         cmd_list "$@" ;;
   which)           cmd_which "$@" ;;
   add)             cmd_add "$@" ;;
+  import)          cmd_import "$@" ;;
+  sync)            cmd_sync "$@" ;;
+  preset)          cmd_preset "$@" ;;
   edit)            cmd_edit "$@" ;;
   rm|remove|delete) cmd_rm "$@" ;;
   doctor)          cmd_doctor "$@" ;;
   help|--help|-h)  cmd_help ;;
   use|unuse|reload)
-    echo "ccm: '$cmd' must run as a shell function, not via this script." >&2
-    echo "     Make sure ~/.claude-multi/init.sh is sourced in your shell rc." >&2
+    echo "ccm: '$cmd' 必须作为 shell 函数运行，不能直接执行脚本。" >&2
+    echo "     请确保 ~/.claude-multi/init.sh 已在 shell rc 中 source。" >&2
     exit 2
     ;;
-  *) echo "ccm: unknown command '$cmd' (try 'ccm help')" >&2; exit 2 ;;
+  *) echo "ccm: 未知命令 '$cmd' (试试 'ccm help')" >&2; exit 2 ;;
 esac

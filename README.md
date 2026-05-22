@@ -1,23 +1,18 @@
-# claude-multi
+# 🎯 claude-multi
 
-> 按终端窗口快速切换 Claude Code 的环境变量 —— 多个窗口同时跑不同的 Anthropic 资源供应商。
+> 一条命令切供应商 —— `claude-deepseek`、`claude-kimi`、`claude-openrouter` ... 每个终端窗口独立，互不干扰。
 
-打开一个终端跑 **idealab**，另一个跑 **DashScope/Qwen**，第三个跑 **Anthropic 官方** —— 同时进行，期间不用动任何配置文件。
+打开三个终端，同时跑三个不同的供应商，**不用改任何配置文件**：
 
 ```sh
-# 终端 A
-$ claude-idealab         # 把这个终端的 env 切到 idealab，然后启动 claude
-> hello
-^D                        # 退出 claude
-$ claude                  # env 还在，依然走 idealab
-> ...
-
-# 终端 B（同时）
-$ claude-qwen            # 这个终端切到 qwen，不影响终端 A
-> ...
+# 终端 A                          # 终端 B                          # 终端 C
+$ claude-deepseek                 $ claude-kimi                     $ claude-openrouter
+> 帮我写个排序算法                  > 总结一下这篇文档                  > review this PR
 ```
 
-跟 [cc-switch](https://github.com/farion1231/cc-switch) 的区别：cc-switch 改 `settings.json` 是**全局生效**的，所有窗口共用一份配置；claude-multi 改的是 **shell env**，**每个终端独立**。
+每个 `claude-<名称>` 命令会自动把当前终端的环境变量切到对应供应商，然后启动 claude。退出 claude 后 env 还在，继续 `claude` 还是走同一个供应商。
+
+跟 [cc-switch](https://github.com/farion1231/cc-switch) 的区别：cc-switch 改 `settings.json` 是**全局生效**的；claude-multi 改的是 **shell env**，**每个终端独立**。两者搭配使用效果最佳 👇
 
 ---
 
@@ -27,273 +22,316 @@ $ claude-qwen            # 这个终端切到 qwen，不影响终端 A
 curl -fsSL https://raw.githubusercontent.com/Tght1211/claude-multi/main/install.sh | bash
 ```
 
-完成后开个新终端，或运行 `source ~/.zshrc`，然后：
+完成后开个新终端，或运行 `source ~/.zshrc`。
 
-```sh
-ccm doctor        # 体检（重要！见下文优先级一节）
-ccm add idealab   # 交互式新建第一个供应商
-claude-idealab    # 跑起来
-```
-
-> 重跑同一条 `curl | bash` 命令会自动 `git pull` 更新到最新版，不会重复改 `.zshrc`。
-
-如果想手动安装：
-
-```sh
-git clone https://github.com/Tght1211/claude-multi.git ~/.claude-multi
-bash ~/.claude-multi/install.sh
-```
+> 💡 重跑同一条 `curl | bash` 会自动 `git pull` 更新，不会重复改 `.zshrc`。
 
 ---
 
-## 为什么需要这个
+## ⚡ 快速开始（3 分钟上手）
 
-Claude Code 从两个地方读供应商配置：
+### Step 1：处理 settings.json 冲突
 
-1. `~/.claude/settings.json` 的 `env` 块 —— **全局**生效
-2. Shell 环境变量 —— **每个终端独立**
-
-`settings.json` 的优先级更高，所以单纯在不同 shell 里 `export` 不同的值是没用的。claude-multi 就是补这块缺失的工具。
-
-跟 cc-switch 不冲突：cc-switch 管 `settings.json`（hooks、statusLine、默认 model 等），claude-multi 管 shell env。只要 cc-switch 选一个 `env: {}` 的 profile 就行，下面详述。
-
----
-
-## ⚠️ 优先级（用之前必须看的一节）
-
-这是使用 claude-multi（或任何想从 shell 控制 Claude Code env 的工具）**最重要的一个事实**。
-
-Claude Code 启动时，同一个变量（比如 `ANTHROPIC_BASE_URL`）可能在多个地方被设置。优先级是：
-
-| 优先级 | 来源 | 作用域 | 由谁设置 |
-|---|---|---|---|
-| 🟢 **赢** | `~/.claude/settings.json` 里 `"env": { ... }` | 全局 | cc-switch / 手动改 |
-| 🔴 **输** | Shell 导出的环境变量（`export FOO=bar`） | 每个终端独立 | claude-multi / 你的 `.zshrc` |
-
-> **具体说**：如果 `settings.json` 里有 `"env": { "ANTHROPIC_BASE_URL": "https://x.com" }`，
-> 那么不管你在 shell 里 `export ANTHROPIC_BASE_URL=https://y.com` 还是跑 `ccm use foo`，
-> Claude Code **实际还是会访问 `https://x.com`**。你设的 shell 值被静默覆盖了。
-
-（已对照 [Claude Code 官方文档](https://docs.claude.com/en/docs/claude-code/settings) 确认。）
-
-### 想让 claude-multi 真正生效，必须做这一步
+> 🔔 **重要**：`~/.claude/settings.json` 的 `env` 块会**覆盖** shell env。claude-multi 每次启动前会自动检测并提示同步，但你也可以提前处理：
 
 | 你的情况 | 怎么做 |
 |---|---|
-| 用 cc-switch | 选一个 `"env": {}` 的 profile 并保持激活 |
-| 不用 cc-switch | 手动把 `~/.claude/settings.json` 里的 `env` 字段改成 `{}` 或删掉 |
+| 🔄 已有 cc-switch | 在 cc-switch 中选一个 `"env": {}` 的 profile |
+| 📋 settings.json 里有 env 配置 | 运行 `ccm sync` 一键导入到 ccm 并自动清空 |
+| ✨ 全新用户 | 什么都不用做，`~/.claude/settings.json` 默认没有 env 块 |
 
-装完后，`ccm doctor` 会自动检测这个冲突，并明确告诉你哪些 key 在冲突：
+### Step 2：添加你的第一个供应商
 
-```
-⚠ /Users/you/.claude/settings.json has a non-empty 'env' block.
-  conflicting keys: ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, ANTHROPIC_MODEL, ...
-  Those values will OVERRIDE anything ccm sets in the shell.
-  Fix: in cc-switch, switch to a profile whose 'env' is {} (empty),
-       or edit /Users/you/.claude/settings.json and replace the env block with: "env": {}
+**最快方式 — 从 cc-switch / settings.json 同步：**
+```sh
+ccm sync                # 🔍 自动检测 settings.json 的 env，导入为 ccm 供应商，然后清空 env
 ```
 
-**没修这一步之前**：claude-multi 看起来在工作（命令都不报错），但**其实不切换供应商** —— `ccm use idealab` 显示切换成功，`claude` 还是会走 `settings.json` 里钉住的那个供应商。
+**从模板快速创建：**
+```sh
+cp ~/.claude-multi/providers/deepseek.env.example ~/.claude-multi/providers/deepseek.env
+ccm edit deepseek       # 📝 替换 YOUR_DEEPSEEK_KEY_HERE 为真实 token
+ccm reload              # 🔄 重新扫描
+```
+
+**用内置预设（如 Kimi 1M）：**
+```sh
+ccm preset kimi-1m kimi    # 📦 一键创建 kimi 供应商
+ccm edit kimi              # 📝 替换 token
+ccm reload
+```
+
+### Step 3：跑起来！🎉
+
+```sh
+claude-deepseek            # 🚀 这个终端走 DeepSeek
+claude-kimi -p "hi"        # 🚀 一次性提问
+claude-openrouter          # 🚀 这个终端走 OpenRouter
+```
+
+> 🛡️ 每次 `claude-<名称>` 启动前，会**自动检测** settings.json 是否有冲突。如果有，会提示你是否同步并清空 —— 确保 ccm 始终生效。
 
 ---
 
-## 使用
+## 📖 核心用法
 
-### 主用法 1：`claude-<name>` —— 切 env + 启动 claude（一行搞定）
+### `claude-<名称>` —— 切 env + 启动 claude（最推荐 ⭐）
+
+配好供应商后，直接用 `claude-<名称>` 启动：
 
 ```sh
-claude-idealab               # 把这个终端的 env 切到 idealab，然后启动 claude
-claude-qwen -p "总结一下..."   # 所有参数原样传给 claude
-claude                        # 退出 claude 后，env 还在这个终端，继续走刚才那个供应商
-claude-idealab                # 同一个终端里再切回来
+claude-deepseek                 # 切到 deepseek，启动 claude
+claude-qwen -p "总结一下..."     # 切到 qwen，传参给 claude
+claude                          # 退出后 env 还在，继续走刚才的供应商
+claude-kimi                     # 同一个终端里切到 kimi
 ```
 
-跑过 `claude-<name>` 之后，env 会**留在这个终端里**，直到关掉窗口或 `ccm unuse`。
+> 💡 `claude-<名称>` 会**自动检测** settings.json 冲突 → 提示同步 → 清空 → 启动。全程无需手动处理。
 
-### 主用法 2：`ccm use <name>` —— 只切 env，不启动 claude
+支持的供应商名称取决于你在 `~/.claude-multi/providers/` 下配了哪些 `.env` 文件。比如：
+
+| .env 文件 | 启动命令 | 供应商 |
+|---|---|---|
+| `deepseek.env` | `claude-deepseek` | DeepSeek |
+| `kimi.env` | `claude-kimi` | Kimi / 月之暗面 |
+| `openrouter.env` | `claude-openrouter` | OpenRouter |
+| `dashscope.env` | `claude-dashscope` | 阿里云 DashScope |
+| `mimo.env` | `claude-mimo` | 小米 MIMO |
+| `minimax.env` | `claude-minimax` | MiniMax |
+| `mo.env` | `claude-mo` | 自定义 |
+| `qwen.env` | `claude-qwen` | 通义千问 |
+
+按 `claude-<TAB>` 可以看到所有可用的供应商名称。
+
+### `ccm use <名称>` —— 只切 env，不启动 claude
 
 ```sh
-ccm use idealab
-echo $ANTHROPIC_BASE_URL      # idealab 的 URL
-claude                         # 走 idealab
-cc                             # 你自己的 alias 也走 idealab
+ccm use deepseek                # 切换 env
+echo $ANTHROPIC_BASE_URL        # 验证
+claude                          # 走 deepseek
 ```
 
-### 管理供应商
+### `ccm sync` —— 一键同步 settings.json 🔧
 
 ```sh
-ccm list                       # 列出所有供应商，✓ 标记当前窗口在用的
-ccm which                      # 打印当前窗口的供应商名
-ccm add <name>                 # 交互式新建一个 .env
-ccm edit <name>                # 用 $EDITOR 打开一个 .env
-ccm rm <name>                  # 删除一个 .env
-ccm reload                     # 手动加了 .env 文件后，重新扫描
-ccm unuse                      # 清掉当前 shell 的 env（回到 settings.json 默认）
-ccm doctor                     # 体检：检测 settings.json 冲突、.env 是否能解析等
+ccm sync                        # 从 settings.json 导入 env → 创建供应商 → 清空 settings.json
+ccm sync my-provider            # 指定供应商名称
+```
+
+> 🛡️ 这是解决 "settings.json 覆盖 shell env" 问题的终极方案。运行一次，永久解决冲突。
+
+### 管理命令
+
+```sh
+ccm list                        # 📋 列出所有供应商，✓ 标记当前在用的
+ccm which                       # 🔍 打印当前供应商名
+ccm add <名称>                  # ➕ 交互式新建 .env
+ccm import [名称] [来源]         # 📥 从 JSON / settings.json 导入
+ccm preset [名称] [供应商]       # 📦 从内置预设创建
+ccm sync [名称]                 # 🔄 同步 settings.json 并清空
+ccm edit <名称>                 # ✏️  用 $EDITOR 编辑
+ccm rm <名称>                   # 🗑️  删除
+ccm reload                      # 🔃 重新扫描 .env 文件
+ccm unuse                       # 🧹 清除当前终端 env
+ccm doctor                      # 🏥 体检：检测冲突、路径、语法等
 ```
 
 ### Tab 补全（zsh）
 
 ```sh
-claude-<TAB>                   # zsh 自动补全所有 claude-* 函数
-ccm use <TAB>                  # → idealab qwen ...
-ccm edit <TAB>
+claude-<TAB>                    # → claude-deepseek claude-kimi claude-openrouter ...
+ccm use <TAB>                   # → deepseek kimi openrouter ...
+ccm sync <TAB>                  # → (供应商名列表)
 ```
 
 ---
 
-## 新增供应商（3 种方式，从快到灵活）
+## 🛡️ 自动冲突检测（Guard）
 
-### 方式 1：`ccm add <name>` —— 交互式问 3 个值（最快）
+**这是 claude-multi 的核心安全机制**：每次运行 `claude-<名称>` 或 `ccm use` 时，会自动检测 `~/.claude/settings.json` 的 `env` 块。
+
+如果检测到冲突：
+```
+🔔 检测到 settings.json 中有环境变量配置
+⚠️  这些值会覆盖 ccm 的 shell env，导致供应商切换失效。
+💡 (建议搭配 cc-switch 使用，选一个 env: {} 的 profile)
+
+🔄 是否同步到 ccm 并清空 settings.json env? [Y/n]
+```
+
+- 选 `Y`（默认）→ 自动运行 `ccm sync`，导入为供应商并清空 settings.json
+- 选 `N` → 再问是否只清空不同步
+- 都不选 → 阻止启动，直到手动解决
+
+> 💨 设 `CCM_NO_GUARD=1` 可跳过检测（用于脚本/CI 等非交互场景）。
+
+---
+
+## 📥 新增供应商（5 种方式）
+
+### 方式 1：`ccm sync` —— 从 settings.json 一键同步（最推荐 ⭐）
+
+如果你已经在 settings.json / cc-switch 里配好了供应商：
+
+```sh
+ccm sync                # 自动读取 settings.json → 导入 → 清空 env
+```
+
+一步到位，导入和清空都搞定。
+
+### 方式 2：`ccm preset` —— 内置快捷预设
+
+```sh
+ccm preset                       # 查看可用预设
+ccm preset kimi-1m kimi          # 用预设创建 kimi 供应商
+ccm edit kimi                    # 替换 token
+ccm reload
+claude-kimi                      # 🚀
+```
+
+| 预设名 | 说明 |
+|---|---|
+| `kimi-1m` | 🌙 Kimi K2.5 Turbo — 1M 上下文窗口 |
+| `idealab` | 🏢 阿里 idealab — Claude Opus 4.7 代理 |
+
+### 方式 3：`ccm add` —— 交互式 3 个问题
 
 ```sh
 ccm add deepseek
-# 依次输入：
-#   ANTHROPIC_BASE_URL  : https://api.deepseek.com/anthropic
-#   ANTHROPIC_AUTH_TOKEN: sk-xxx
-#   ANTHROPIC_MODEL     : deepseek-chat
-# 自动写到 ~/.claude-multi/providers/deepseek.env
-# 上面输入的 model 会同时填到 OPUS/SONNET/HAIKU 三个变量
-ccm reload                   # 或开新终端
-claude-deepseek              # 就能用了
+# ANTHROPIC_BASE_URL  : https://api.deepseek.com/anthropic
+# ANTHROPIC_AUTH_TOKEN: sk-xxx
+# ANTHROPIC_MODEL     : deepseek-chat
+ccm reload && claude-deepseek
 ```
 
-### 方式 2：从模板复制（字段较多的供应商更省事）
-
-仓库里已有两个开箱即用的模板，token 是占位符：
+### 方式 4：从模板复制
 
 ```sh
-ls ~/.claude-multi/providers/
-# idealab.env.example  qwen.env.example
+ls ~/.claude-multi/providers/*.env.example
+# openrouter  deepseek  kimi  minimax  mimo  dashscope  anthropic-third-party
 
-cp ~/.claude-multi/providers/qwen.env.example ~/.claude-multi/providers/qwen.env
-ccm edit qwen                # 用 $EDITOR 打开，把 sk-YOUR_DASHSCOPE_KEY_HERE 换成真 token
-ccm reload
-claude-qwen
+cp ~/.claude-multi/providers/kimi.env.example ~/.claude-multi/providers/kimi.env
+ccm edit kimi              # 替换 token
+ccm reload && claude-kimi
 ```
 
-qwen 模板把 DashScope 的全部字段（包括 `*_MODEL_NAME` 和 `CLAUDE_CODE_SUBAGENT_MODEL`）都填好了，**只需替换 token**。
-
-### 方式 3：直接手写 `.env`（最灵活，任意变量都行）
+### 方式 5：手写 `.env`（最灵活）
 
 ```sh
-cat > ~/.claude-multi/providers/kimi.env <<'EOF'
-export ANTHROPIC_AUTH_TOKEN="sk-xxx"
-export ANTHROPIC_BASE_URL="https://api.moonshot.cn/anthropic"
-export ANTHROPIC_MODEL="kimi-k2-turbo-preview"
+cat > ~/.claude-multi/providers/mo.env <<'EOF'
+export ANTHROPIC_AUTH_TOKEN="your-token"
+export ANTHROPIC_BASE_URL="https://your-proxy.com/anthropic"
+export ANTHROPIC_MODEL="your-model"
 EOF
-ccm reload
-claude-kimi
+ccm reload && claude-mo
 ```
 
-### 配完一定要跑这两步
+### 配完验证
 
 ```sh
-ccm doctor                   # 体检：检测 settings.json 是否会覆盖你刚配的 env（最常见的坑）
-claude-<name> -p "hi"        # 实际跑一下，确认走的是新供应商
+ccm doctor                     # 🏥 检测 settings.json 冲突 + .env 语法
+claude-<名称> -p "hi"          # 🧪 实际跑一下确认
 ```
-
-> 你的 `.env` 文件自动被 gitignore 保护，token 永远不会被误提交。
 
 ---
 
-## 供应商配置文件格式
+## 📁 供应商配置文件格式
 
-纯 shell 片段，会被直接 source。任意 `ANTHROPIC_*` / `CLAUDE_CODE_*` 变量都支持，没有固定 schema。
+纯 shell 片段，会被直接 `source`。任意 `ANTHROPIC_*` / `CLAUDE_CODE_*` 变量都支持。
 
 ```sh
-# ~/.claude-multi/providers/idealab.env
-export ANTHROPIC_AUTH_TOKEN="..."
-export ANTHROPIC_BASE_URL="https://idealab.alibaba-inc.com/api/anthropic"
-export ANTHROPIC_MODEL="claude-opus-4-7"
-export ANTHROPIC_DEFAULT_OPUS_MODEL="claude-opus-4-7"
-export ANTHROPIC_DEFAULT_SONNET_MODEL="claude-opus-4-7"
-export ANTHROPIC_DEFAULT_HAIKU_MODEL="claude-opus-4-7"
+# ~/.claude-multi/providers/openrouter.env
+export ANTHROPIC_AUTH_TOKEN="sk-or-v1-..."
+export ANTHROPIC_BASE_URL="https://openrouter.ai/api/anthropic"
+export ANTHROPIC_MODEL="anthropic/claude-sonnet-4.6"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="anthropic/claude-opus-4.7"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="anthropic/claude-sonnet-4.6"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="anthropic/claude-haiku-4.5"
 ```
 
 ```sh
-# ~/.claude-multi/providers/qwen.env（DashScope，Anthropic 兼容端点）
+# ~/.claude-multi/providers/kimi.env
 export ANTHROPIC_AUTH_TOKEN="sk-..."
-export ANTHROPIC_BASE_URL="https://dashscope.aliyuncs.com/apps/anthropic"
-export ANTHROPIC_MODEL="qwen-latest-series-invite-beta-v34"
-export ANTHROPIC_DEFAULT_OPUS_MODEL="qwen-latest-series-invite-beta-v34[1M]"
-export ANTHROPIC_DEFAULT_HAIKU_MODEL="qwen-latest-series-invite-beta-v34"
-export ANTHROPIC_DEFAULT_SONNET_MODEL="qwen-latest-series-invite-beta-v34"
-export CLAUDE_CODE_SUBAGENT_MODEL="qwen-latest-series-invite-beta-v23"
+export ANTHROPIC_BASE_URL="https://api.kimi.com/coding/anthropic"
+export ANTHROPIC_MODEL="kimi-k2.5-turbo-preview"
+export ANTHROPIC_SMALL_FAST_MODEL="kimi-k2.5-turbo-preview"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="kimi-k2.5-turbo-preview"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="kimi-k2.5-turbo-preview"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="kimi-k2.5-turbo-preview"
 ```
 
-供应商 `.env` 文件**默认被 gitignore**，token 永远不会被误提交。仓库里只放 `*.env.example` 模板。
+> 🔒 `.env` 文件自动被 gitignore 保护，token 永远不会被误提交。
 
 ---
 
-## 文件结构
+## 📂 文件结构
 
 ```
 ~/.claude-multi/
-├── init.sh                     # 被 .zshrc source，定义 claude-* 函数和 ccm wrapper
-├── ccm                         # 独立 CLI（list / add / edit / rm / doctor 等）
-├── install.sh                  # 幂等安装器（同一份脚本支持远程/本地两种模式）
+├── init.sh                         # 被 .zshrc source，定义 claude-* 函数 + guard + ccm wrapper
+├── ccm                             # 独立 CLI（list/add/import/sync/preset/edit/rm/doctor）
+├── install.sh                      # 幂等安装器
 ├── providers/
-│   ├── .gitignore              # 忽略所有 *.env（保护 token），保留 *.example
-│   ├── idealab.env.example     # 模板
-│   ├── qwen.env.example
-│   └── idealab.env             # 你的真实配置（gitignored，不会被提交）
-└── completions/_ccm            # zsh tab 补全
+│   ├── .gitignore                  # 🔒 忽略 *.env，保留 *.example
+│   ├── openrouter.env.example      # 📦 模板
+│   ├── deepseek.env.example
+│   ├── kimi.env.example
+│   ├── minimax.env.example
+│   ├── mimo.env.example
+│   ├── dashscope.env.example
+│   ├── anthropic-third-party.env.example
+│   └── deepseek.env                # 🔑 你的真实配置（gitignored）
+└── completions/_ccm                # zsh tab 补全
 ```
 
 ---
 
-## 常见问题
+## ❓ 常见问题
 
-**`claude-idealab` 跑了，但 `claude` 还是走旧供应商**
+**`claude-deepseek` 跑了，但 `claude` 还是走旧供应商？**
 
-99% 是 `~/.claude/settings.json` 的 `env` 块非空把 shell env 盖掉了。跑 `ccm doctor`，输出里会列出具体冲突的 key 和修复方法。
+🔔 99% 是 `~/.claude/settings.json` 的 `env` 块非空。两个办法：
+- 运行 `ccm sync` 一键同步并清空
+- 或运行 `ccm doctor` 看具体冲突的 key
 
-**加了新的 `.env` 文件，但 `claude-newname` 不存在**
+> 💡 正常情况下 `claude-<名称>` 会自动检测并提示你同步，不需要手动处理。
 
-跑 `ccm reload`，或开新终端。`claude-<name>` 函数是 `init.sh` 被 source 时生成的。
+**加了新的 `.env` 文件，但 `claude-xxx` 不存在？**
 
-**想让这个终端保持 idealab，临时跑一次 qwen 不要污染**
+🔃 跑 `ccm reload`，或开新终端。
 
-开新终端（每个终端自己的 env）。或者用显式子 shell：
+**想让这个终端保持 deepseek，临时跑一次 kimi？**
 
+开新终端。或用子 shell：
 ```sh
-(ccm use qwen && claude -p "hi")   # 圆括号把 env 局限在这个子 shell，外面的 idealab 不动
+(ccm use kimi && claude -p "hi")    # env 局限在子 shell 里
 ```
 
-**Token 不小心被提交了？**
+**Token 会被误提交吗？**
 
-不用担心，`providers/*.env` 一开始就在 `.gitignore` 里，git 永远不会跟踪它们。只有 `*.env.example` 模板会被提交。
+🔒 不会。`providers/*.env` 在 `.gitignore` 里，只有 `*.env.example` 模板会被提交。
 
-**重装/更新**
-
-直接再跑一次安装命令即可：
+**怎么跳过每次启动前的冲突检测？**
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Tght1211/claude-multi/main/install.sh | bash
-```
-
-它会自动 `git pull` 更新，不会重复改 `.zshrc`，你的 provider .env 文件因为是 gitignored 所以也不会被动。
-
-**卸载**
-
-```sh
-# 1. 从 .zshrc 删掉 # >>> claude-multi >>> 那一段（5 行）
-# 2. 删除安装目录
-rm -rf ~/.claude-multi
-# 3. 开新终端
+CCM_NO_GUARD=1 claude-deepseek     # 单次跳过
+# 或 export CCM_NO_GUARD=1        # 永久跳过（不推荐）
 ```
 
 ---
 
-## 与 cc-switch 共存
+## 🤝 与 cc-switch 共存
 
 | 工具 | 管什么 |
 |---|---|
-| **cc-switch** | `~/.claude/settings.json` —— hooks、statusLine、默认模型等 |
+| **cc-switch** | `settings.json` —— hooks、statusLine、默认模型等 |
 | **claude-multi** | Shell 环境变量（`ANTHROPIC_*`、`CLAUDE_CODE_*`） |
 
-cc-switch 选一个 `env: {}` 的 profile，然后让 claude-multi 在每个终端按需切供应商即可。
+最佳实践：
+1. cc-switch 选一个 `env: {}` 的 profile
+2. 在 cc-switch 里配好供应商（env 写在 profile 里）
+3. 运行 `ccm sync` 把 env 同步到 ccm 并清空 settings.json
+4. 以后直接用 `claude-<名称>` 启动
 
 ---
 

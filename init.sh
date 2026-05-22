@@ -4,10 +4,11 @@
 #
 # See README.md for usage. Prereq: ~/.claude/settings.json must NOT have a
 # non-empty `env` block (Claude Code's settings env wins over shell env).
-# Run `ccm doctor` to check.
+# The _ccm_guard function auto-detects this and offers to sync before launch.
 
 export CCM_HOME="${CCM_HOME:-$HOME/.claude-multi}"
 export CCM_PROVIDERS_DIR="$CCM_HOME/providers"
+export CCM_SETTINGS_JSON="${CCM_SETTINGS_JSON:-$HOME/.claude/settings.json}"
 
 # Put the ccm CLI on PATH (idempotent)
 case ":$PATH:" in
@@ -15,11 +16,66 @@ case ":$PATH:" in
   *) export PATH="$CCM_HOME:$PATH" ;;
 esac
 
+# ---- guard: 启动前自动检测 settings.json 冲突 --------------------------------
+
+# 每次 claude-<name> / ccm use 启动前自动调用。
+# 如果 settings.json 有非空 env 块，提示用户同步到 ccm 并清空。
+# 只有检测通过（env 为空或不存在）才允许启动 claude。
+# 设置 CCM_NO_GUARD=1 可跳过检测。
+_ccm_guard() {
+  # 跳过检测的逃生口
+  [ -n "${CCM_NO_GUARD:-}" ] && return 0
+
+  # 文件不存在 → 无冲突
+  [ -f "$CCM_SETTINGS_JSON" ] && [ -s "$CCM_SETTINGS_JSON" ] || return 0
+
+  # 快速检测: settings.json 里是否有非空 env 块 (grep 级别，极快)
+  grep -qE '"env"[[:space:]]*:[[:space:]]*\{' "$CCM_SETTINGS_JSON" 2>/dev/null && \
+    grep -qE '"(ANTHROPIC|CLAUDE_CODE)_' "$CCM_SETTINGS_JSON" 2>/dev/null || return 0
+
+  # 确认有冲突 — 但非交互模式下只警告，不阻塞
+  if [ ! -t 0 ]; then
+    echo "⚠️  ccm: settings.json 的 env 块非空，可能会覆盖 ccm 设置" >&2
+    return 0
+  fi
+
+  echo
+  echo "  🔔 检测到 settings.json 中有环境变量配置"
+  echo "  ⚠️  这些值会覆盖 ccm 的 shell env，导致供应商切换失效。"
+  echo "  💡 (建议搭配 cc-switch 使用，选一个 env: {} 的 profile)"
+  echo
+  printf '  🔄 是否同步到 ccm 并清空 settings.json env? [Y/n] '
+  local ans
+  read -r ans
+  case "$ans" in
+    ''|y|Y|yes|YES)
+      command ccm sync "$@"
+      ;;
+    n|N)
+      printf '  🗑️  那是否只清空 settings.json env（不同步）? [y/N] '
+      read -r ans
+      case "$ans" in
+        y|Y|yes|YES)
+          CCM_SETTINGS_JSON="$CCM_SETTINGS_JSON" command ccm sync __ccm_clear_only__
+          ;;
+        *)
+          echo "  ❌ 已取消。ccm 无法正常工作，直到 settings.json env 被清空。" >&2
+          echo "     🛠️  手动修复: 运行 ccm sync 或在 cc-switch 中选 env:{} 的 profile" >&2
+          return 1
+          ;;
+      esac
+      ;;
+  esac
+}
+
+# ---- generate claude-<name> functions ---------------------------------------
+
 # Generate `claude-<name>` functions.
-# Each function (a) injects the provider's env into the CURRENT shell — so
-# subsequent plain `claude` commands in the same terminal keep using that
-# provider — then (b) launches `claude`. No subshell, no exec: env persists
-# after claude exits.
+# Each function (a) runs _ccm_guard to check settings.json conflict,
+# (b) injects the provider's env into the CURRENT shell — so subsequent
+# plain `claude` commands in the same terminal keep using that provider —
+# then (c) launches `claude`. No subshell, no exec: env persists after
+# claude exits.
 _ccm_define_aliases() {
   local f name
   # zsh: don't error if no .env files yet
@@ -34,6 +90,7 @@ _ccm_define_aliases() {
       *[!a-zA-Z0-9_-]*) continue ;;
     esac
     eval "claude-${name}() {
+      _ccm_guard || return 1
       set -a
       . '${f}'
       set +a
@@ -44,9 +101,11 @@ _ccm_define_aliases() {
 }
 _ccm_define_aliases
 
+# ---- ccm shell function -----------------------------------------------------
+
 # `ccm` shell function: handles commands that must run in the current shell
 # (use / unuse / reload) and delegates everything else to the standalone
-# `ccm` script (list/which/add/edit/rm/doctor/help).
+# `ccm` script (list/which/add/edit/rm/doctor/help/sync/import/preset).
 ccm() {
   local cmd="${1:-help}"
   shift 2>/dev/null
@@ -54,21 +113,22 @@ ccm() {
     use)
       local name="$1"
       if [ -z "$name" ]; then
-        echo "ccm use: missing provider name" >&2
-        echo "usage: ccm use <provider>" >&2
+        echo "ccm use: 缺少供应商名称" >&2
+        echo "用法: ccm use <供应商名>" >&2
         return 2
       fi
       local envfile="$CCM_PROVIDERS_DIR/$name.env"
       if [ ! -f "$envfile" ]; then
-        echo "ccm: provider '$name' not found at $envfile" >&2
-        echo "available: $(ls "$CCM_PROVIDERS_DIR" 2>/dev/null | sed 's/\.env$//' | tr '\n' ' ')" >&2
+        echo "ccm: 供应商 '$name' 不存在 ($envfile)" >&2
+        echo "可用: $(ls "$CCM_PROVIDERS_DIR" 2>/dev/null | sed 's/\.env$//' | tr '\n' ' ')" >&2
         return 1
       fi
+      _ccm_guard || return 1
       set -a
       . "$envfile"
       set +a
       export CCM_ACTIVE_PROVIDER="$name"
-      echo "ccm: switched this shell to '$name' (base_url=$ANTHROPIC_BASE_URL)"
+      echo "🚀 ccm: 当前终端已切换到 '$name' (base_url=$ANTHROPIC_BASE_URL)"
       ;;
     unuse)
       unset ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_BASE_URL \
@@ -79,11 +139,11 @@ ccm() {
             ANTHROPIC_CUSTOM_HEADERS ANTHROPIC_BETAS \
             CLAUDE_CODE_SUBAGENT_MODEL \
             CCM_ACTIVE_PROVIDER
-      echo "ccm: cleared shell env (claude will now use ~/.claude/settings.json defaults)"
+      echo "🧹 ccm: 已清除当前终端 env (claude 将使用 ~/.claude/settings.json 默认值)"
       ;;
     reload)
       _ccm_define_aliases
-      echo "ccm: regenerated claude-<name> functions from $CCM_PROVIDERS_DIR"
+      echo "🔄 ccm: 已重新生成 claude-<名称> 函数 ($CCM_PROVIDERS_DIR)"
       ;;
     *)
       # Delegate to the standalone script
