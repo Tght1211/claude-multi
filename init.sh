@@ -40,13 +40,19 @@ _ccm_guard() {
   fi
 
   echo
-  echo "  ⚠️  settings.json 中有 env 配置，会覆盖 ccm 的 shell env"
-  printf '  📥 同步到 ccm? [Y/n] '
+  echo "  ⚠️  settings.json 中有 env 配置，会覆盖 ccm"
+  echo "    1) 同步到 ccm"
+  echo "    2) 同步并清空 settings.json env"
+  echo "    3) 跳过"
+  printf '    选择 [1/2/3]: '
   local ans
   read -r ans
   case "$ans" in
-    ''|y|Y|yes|YES)
+    1)
       command ccm sync "$@"
+      ;;
+    2)
+      command ccm sync --clear "$@"
       ;;
     *)
       echo "  💡 稍后可运行 ccm sync 手动同步"
