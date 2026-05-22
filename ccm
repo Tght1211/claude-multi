@@ -755,7 +755,7 @@ ccm — 按终端窗口管理 Claude Code 供应商环境变量
   ccm preset deepseek ds           # 从预设创建 ds.env
   ccm sync mo                      # 从 settings.json 导入为 mo
   ccm sync --clear                 # 导入 + 清空 settings.json env
-  claude                           # 无 provider 时自动注入 official.env 代理
+  claude                           # 无 provider 时自动注入 official.env 代理 (需开启 CCM_PROXY_OFFICIAL=1)
   claude-deepseek                  # 启动 claude 走 deepseek (无代理)
   claude-dashscope -p "hi"         # 一次性提问
 
