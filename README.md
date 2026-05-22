@@ -142,6 +142,61 @@ ccm edit <TAB>
 
 ---
 
+## 新增供应商（3 种方式，从快到灵活）
+
+### 方式 1：`ccm add <name>` —— 交互式问 3 个值（最快）
+
+```sh
+ccm add deepseek
+# 依次输入：
+#   ANTHROPIC_BASE_URL  : https://api.deepseek.com/anthropic
+#   ANTHROPIC_AUTH_TOKEN: sk-xxx
+#   ANTHROPIC_MODEL     : deepseek-chat
+# 自动写到 ~/.claude-multi/providers/deepseek.env
+# 上面输入的 model 会同时填到 OPUS/SONNET/HAIKU 三个变量
+ccm reload                   # 或开新终端
+claude-deepseek              # 就能用了
+```
+
+### 方式 2：从模板复制（字段较多的供应商更省事）
+
+仓库里已有两个开箱即用的模板，token 是占位符：
+
+```sh
+ls ~/.claude-multi/providers/
+# idealab.env.example  qwen.env.example
+
+cp ~/.claude-multi/providers/qwen.env.example ~/.claude-multi/providers/qwen.env
+ccm edit qwen                # 用 $EDITOR 打开，把 sk-YOUR_DASHSCOPE_KEY_HERE 换成真 token
+ccm reload
+claude-qwen
+```
+
+qwen 模板把 DashScope 的全部字段（包括 `*_MODEL_NAME` 和 `CLAUDE_CODE_SUBAGENT_MODEL`）都填好了，**只需替换 token**。
+
+### 方式 3：直接手写 `.env`（最灵活，任意变量都行）
+
+```sh
+cat > ~/.claude-multi/providers/kimi.env <<'EOF'
+export ANTHROPIC_AUTH_TOKEN="sk-xxx"
+export ANTHROPIC_BASE_URL="https://api.moonshot.cn/anthropic"
+export ANTHROPIC_MODEL="kimi-k2-turbo-preview"
+EOF
+ccm reload
+claude-kimi
+```
+
+### 配完一定要跑这两步
+
+```sh
+ccm doctor                   # 体检：检测 settings.json 是否会覆盖你刚配的 env（最常见的坑）
+claude-<name> -p "hi"        # 实际跑一下，确认走的是新供应商
+```
+
+> 你的 `.env` 文件自动被 gitignore 保护，token 永远不会被误提交。
+
+---
+
 ## 供应商配置文件格式
 
 纯 shell 片段，会被直接 source。任意 `ANTHROPIC_*` / `CLAUDE_CODE_*` 变量都支持，没有固定 schema。
