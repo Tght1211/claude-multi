@@ -570,67 +570,83 @@ cmd_rm() {
 }
 
 cmd_status() {
-  echo "📊 $(_bold 'ccm 状态')"
+  local _proxy_state_file="$CCM_HOME/.proxy_on"
+  local _proxy_on=0
+  [ -f "$_proxy_state_file" ] && _proxy_on=1
+
+  # header
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  printf "  %s  %s\n" "$(_bold 'ccm status')" "$(_dim "$(date '+%H:%M:%S')")"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo
 
-  # 1. 开关状态
-  if [ -n "${CCM_PROXY_OFFICIAL:-}" ]; then
-    echo "  claude 包装函数:  $(_green '已启用') (CCM_PROXY_OFFICIAL=1)"
+  # 1. 代理保护开关
+  if [ "$_proxy_on" -eq 1 ]; then
+    echo "  🛡️   官方代理保护    $(_green '已开启')"
   else
-    echo "  claude 包装函数:  $(_dim '未启用') (设置 CCM_PROXY_OFFICIAL=1 开启)"
+    echo "  🔓  官方代理保护    $(_dim '未开启')  $(_dim 'ccm proxy on')"
+  fi
+
+  # 1b. 代理端口检测开关
+  local _check_state_file="$CCM_HOME/.no_proxy_check"
+  if [ -f "$_check_state_file" ]; then
+    echo "  🔍  代理端口检测    $(_dim '已关闭')  $(_dim 'ccm proxy check on')"
+  else
+    echo "  🔍  代理端口检测    $(_green '已开启')"
   fi
 
   # 2. 当前 provider
   if [ -n "${CCM_ACTIVE_PROVIDER:-}" ]; then
-    echo "  当前终端供应商:  $(_green "$CCM_ACTIVE_PROVIDER")"
+    echo "  📡  当前供应商      $(_green "$CCM_ACTIVE_PROVIDER")"
   else
-    echo "  当前终端供应商:  $(_dim '无 (直连 claude)')"
+    echo "  📡  当前供应商      $(_dim '无 (直连 claude)')"
   fi
 
-  # 3. official.env
+  # 3. official.env 代理配置 + 端口检测
   local official_env="$CCM_PROVIDERS_DIR/official.env"
   if [ -f "$official_env" ]; then
-    local http_proxy https_proxy socks5_proxy
-    http_proxy="$(_envfile_get "$official_env" HTTP_PROXY)"
-    https_proxy="$(_envfile_get "$official_env" HTTPS_PROXY)"
-    socks5_proxy="$(_envfile_get "$official_env" SOCKS5_PROXY)"
-    echo "  official.env:    $(_green '存在') ($official_env)"
-    [ -n "$http_proxy" ]  && echo "    HTTP_PROXY  = $http_proxy"
-    [ -n "$https_proxy" ] && echo "    HTTPS_PROXY = $https_proxy"
-    [ -n "$socks5_proxy" ] && echo "    SOCKS5_PROXY = $socks5_proxy"
+    local _hp _hsp _sp
+    _hp="$(_envfile_get "$official_env" HTTP_PROXY)"
+    _hsp="$(_envfile_get "$official_env" HTTPS_PROXY)"
+    _sp="$(_envfile_get "$official_env" SOCKS5_PROXY)"
+    echo "  📄  official.env    $(_green '已配置')"
+    [ -n "$_hp" ]   && echo "                      $(_dim 'HTTP_PROXY')   $_hp"
+    [ -n "$_hsp" ]  && echo "                      $(_dim 'HTTPS_PROXY')  $_hsp"
+    [ -n "$_sp" ]   && echo "                      $(_dim 'SOCKS5_PROXY') $_sp"
 
-    # 4. 代理端口检测
-    local check_url="${https_proxy:-$http_proxy}"
-    if [ -n "$check_url" ]; then
-      local addr host port
-      addr="${check_url#*://}"
-      host="${addr%%[:/]*}"
-      port="${addr##*:}"
-      port="${port%%/*}"
-      if [ -n "$host" ] && [ -n "$port" ]; then
-        if command -v nc >/dev/null 2>&1 && nc -z -w 2 "$host" "$port" >/dev/null 2>&1; then
-          echo "    端口 $host:$port:  $(_green '可达 ✓')"
+    # 端口检测
+    local _check_url="${_hsp:-$_hp}"
+    if [ -n "$_check_url" ]; then
+      local _addr _host _port
+      _addr="${_check_url#*://}"
+      _host="${_addr%%[:/]*}"
+      _port="${_addr##*:}"
+      _port="${_port%%/*}"
+      if [ -n "$_host" ] && [ -n "$_port" ]; then
+        if command -v nc >/dev/null 2>&1 && nc -z -w 2 "$_host" "$_port" >/dev/null 2>&1; then
+          echo "  🔌  代理端口        $(_green "${_host}:${_port} 可达 ✓")"
         else
-          echo "    端口 $host:$port:  $(_red '不可达 ✗')  (代理可能未启动)"
+          echo "  🔌  代理端口        $(_red "${_host}:${_port} 不可达 ✗")"
         fi
       fi
     fi
   else
-    echo "  official.env:    $(_dim '不存在') (ccm preset official 创建)"
+    echo "  📄  official.env    $(_dim '未配置')  $(_dim 'ccm proxy set <URL>')"
+  fi
+
+  # 4. settings.json
+  if [ -f "$SETTINGS_JSON" ]; then
+    if _has_settings_env; then
+      echo "  📋  settings.json   $(_yellow 'env 非空 ⚠️  可能覆盖 ccm')"
+    else
+      echo "  📋  settings.json   $(_green 'env 为空 ✓')"
+    fi
+  else
+    echo "  📋  settings.json   $(_dim '不存在')"
   fi
 
   echo
-
-  # 5. settings.json
-  if [ -f "$SETTINGS_JSON" ]; then
-    if _has_settings_env; then
-      echo "  settings.json:   $(_yellow 'env 非空') (可能覆盖 ccm)"
-    else
-      echo "  settings.json:   $(_green 'env 为空') (shell env 生效)"
-    fi
-  else
-    echo "  settings.json:   $(_dim '不存在')"
-  fi
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
 cmd_doctor() {
@@ -717,24 +733,39 @@ cmd_help() {
   cat <<'EOF'
 ccm — 按终端窗口管理 Claude Code 供应商环境变量
 
-用法
+推荐用法 (最快上手)
+  claude-<名称> [参数]  一键用指定供应商启动 claude (推荐!)
+                        启动前自动检测 settings.json 冲突并提示同步
+  示例:
+    claude-deepseek              启动 claude 走 deepseek
+    claude-dashscope -p "hi"     一次性提问
+    claude-official              走官方 + 代理
+
+代理保护 (直连官方时自动注入代理，防止封号)
+  ccm proxy on              开启官方代理保护
+  ccm proxy off             关闭官方代理保护
+  ccm proxy set <URL>       设置代理地址 (创建/更新 official.env)
+  ccm proxy check on|off    开启/关闭代理端口检测
+  ccm proxy status          查看代理保护开关状态
+  ccm status                一览全部状态: 开关、provider、代理、端口
+
+供应商管理
   ccm use <名称>        把当前终端切到指定供应商 (env 注入当前 shell)
   ccm unuse             清除当前终端的 env (回退到 ~/.claude/settings.json)
   ccm list / ls         列出所有供应商，✓ 标记当前终端在用的
   ccm which             打印当前终端的供应商名称
-  ccm sync [名称]       从 settings.json 导入 env 为供应商 (不自动清空)
-      [--clear]         加 --clear 同时清空 settings.json env
   ccm add [名称]        交互式创建供应商 .env 文件 (输入 3 个值)
   ccm import [名称]     从 JSON 文件 / stdin / 粘贴的 JSON 导入
       [文件|json|-]
   ccm preset [预设名]   从内置预设输出配置 / 直接创建供应商
       [供应商名]
+  ccm sync [名称]       从 settings.json 导入 env 为供应商 (不自动清空)
+      [--clear]         加 --clear 同时清空 settings.json env
   ccm edit <名称>       用 $EDITOR 打开供应商的 .env 文件
   ccm cat <名称>        查看供应商配置
   ccm rm <名称>         删除供应商 .env 文件
   ccm reload            新增/编辑 .env 后重新生成 claude-<名称> 函数
   ccm doctor            体检: 检测 settings.json 冲突、路径、语法等
-  ccm status            查看当前状态: 开关、provider、代理、端口
 
 内置预设 (ccm preset <预设名> [供应商名])
   official     官方 Claude — 仅代理配置 (直连官方时自动注入)
@@ -746,24 +777,13 @@ ccm — 按终端窗口管理 Claude Code 供应商环境变量
   mimo         小米 MIMO — mimo-v2.5-pro
   minimax      MiniMax — abab 系列
 
-快捷别名
-  claude-<名称> [参数]  用指定供应商的 env 启动 claude
-                        启动前自动检测 settings.json 冲突并提示同步
-
 示例
-  ccm preset official              # 创建 official.env (交互式输入代理地址)
-  ccm preset deepseek ds           # 从预设创建 ds.env
-  ccm sync mo                      # 从 settings.json 导入为 mo
-  ccm sync --clear                 # 导入 + 清空 settings.json env
-  claude                           # 无 provider 时自动注入 official.env 代理 (需开启 CCM_PROXY_OFFICIAL=1)
-  claude-deepseek                  # 启动 claude 走 deepseek (无代理)
-  claude-dashscope -p "hi"         # 一次性提问
-
-环境变量
-  CCM_PROXY_OFFICIAL   设为 1 启用 claude 包装函数 (直连官方自动注入代理)
-  CCM_PROXY            预设 official 的代理地址 (跳过交互式输入)
-  CCM_NO_PROXY_CHECK   设为 1 跳过 claude 启动时的代理端口检测
-  CCM_NO_GUARD         设为 1 跳过 settings.json 冲突检测
+  ccm proxy set http://127.0.0.1:7897  # 设置代理地址
+  ccm proxy on                         # 开启代理保护
+  ccm proxy off                        # 关闭代理保护
+  ccm preset deepseek ds               # 从预设创建 ds.env
+  ccm sync mo                          # 从 settings.json 导入为 mo
+  ccm sync --clear                     # 导入 + 清空 settings.json env
 
 配置目录
   ~/.claude-multi/providers/<名称>.env

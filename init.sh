@@ -142,6 +142,99 @@ ccm() {
       _ccm_define_aliases
       echo "🔄 ccm: 已重新生成 claude-<名称> 函数 ($CCM_PROVIDERS_DIR)"
       ;;
+    proxy)
+      local subcmd="${1:-}"
+      local state_file="$CCM_HOME/.proxy_on"
+      local check_file="$CCM_HOME/.no_proxy_check"
+      case "$subcmd" in
+        on)
+          mkdir -p "$CCM_HOME"
+          touch "$state_file"
+          echo "🛡️  ccm: 官方代理保护已开启 (直连 claude 将自动注入代理)"
+          ;;
+        off)
+          rm -f "$state_file"
+          echo "🔓 ccm: 官方代理保护已关闭 (直连 claude 不走代理)"
+          ;;
+        toggle)
+          if [ -f "$state_file" ]; then
+            rm -f "$state_file"
+            echo "🔓 ccm: 官方代理保护已关闭"
+          else
+            mkdir -p "$CCM_HOME"
+            touch "$state_file"
+            echo "🛡️  ccm: 官方代理保护已开启"
+          fi
+          ;;
+        set)
+          local proxy_url="${2:-}"
+          if [ -z "$proxy_url" ]; then
+            printf '代理地址: ' >&2
+            read -r proxy_url
+          fi
+          [ -z "$proxy_url" ] && { echo "ccm: 代理地址不能为空" >&2; return 1; }
+          local socks_url
+          case "$proxy_url" in
+            http://*) socks_url="socks5://${proxy_url#http://}" ;;
+            *)        socks_url="$proxy_url" ;;
+          esac
+          local official_env="$CCM_PROVIDERS_DIR/official.env"
+          mkdir -p "$CCM_PROVIDERS_DIR"
+          {
+            echo "# Provider: official (代理配置, $(date +%Y-%m-%d))"
+            echo "export HTTP_PROXY=\"$proxy_url\""
+            echo "export HTTPS_PROXY=\"$proxy_url\""
+            echo "export SOCKS5_PROXY=\"$socks_url\""
+          } > "$official_env"
+          echo "📝 $official_env"
+          echo "🛡️  代理已设置: $proxy_url"
+          # 自动开启代理保护
+          touch "$state_file"
+          echo "🛡️  官方代理保护已自动开启"
+          ;;
+        check)
+          local check_action="${2:-}"
+          case "$check_action" in
+            on)
+              rm -f "$check_file"
+              echo "✅ 代理端口检测已开启"
+              ;;
+            off)
+              mkdir -p "$CCM_HOME"
+              touch "$check_file"
+              echo "⏭️  代理端口检测已关闭"
+              ;;
+            status|"")
+              if [ -f "$check_file" ]; then
+                echo "⏭️  代理端口检测: 已关闭"
+              else
+                echo "✅ 代理端口检测: 已开启"
+              fi
+              ;;
+            *)
+              echo "用法: ccm proxy check on|off|status" >&2
+              return 2
+              ;;
+          esac
+          ;;
+        status|"")
+          if [ -f "$state_file" ]; then
+            echo "🛡️  官方代理保护: 已开启"
+          else
+            echo "🔓 官方代理保护: 未开启 (ccm proxy on 开启)"
+          fi
+          if [ -f "$check_file" ]; then
+            echo "⏭️  代理端口检测: 已关闭"
+          else
+            echo "✅ 代理端口检测: 已开启"
+          fi
+          ;;
+        *)
+          echo "用法: ccm proxy on|off|toggle|set <URL>|check on|off|status" >&2
+          return 2
+          ;;
+      esac
+      ;;
     *)
       # Delegate to the standalone script
       command ccm "$cmd" "$@"
@@ -178,27 +271,28 @@ _ccm_check_proxy() {
 }
 
 # ---- claude wrapper: 直连官方时自动注入代理 -------------------------
-# 默认不启用。设置 CCM_PROXY_OFFICIAL=1 后生效。
+# 始终定义。运行时检查 $CCM_HOME/.proxy_on 状态文件决定是否注入代理。
+# 用 ccm proxy on/off 控制开关。
 # 仅在无 CCM_ACTIVE_PROVIDER 时生效，从 official.env 读取代理配置。
 # 使用子 shell 隔离代理变量，不影响当前 shell 环境。
 # 有 provider 激活时直接透传，代理不参与。
-if [ -n "${CCM_PROXY_OFFICIAL:-}" ]; then
 claude() {
-  if [ -n "${CCM_ACTIVE_PROVIDER:-}" ]; then
+  # 未开启代理保护 或 已有 provider 激活 → 直接透传
+  if [ ! -f "$CCM_HOME/.proxy_on" ] || [ -n "${CCM_ACTIVE_PROVIDER:-}" ]; then
     command claude "$@"
     return $?
   fi
 
   local _ccm_official_env="$CCM_PROVIDERS_DIR/official.env"
   if [ -f "$_ccm_official_env" ]; then
-    # 检测代理端口是否可用 (设置 CCM_NO_PROXY_CHECK=1 跳过)
-    if [ -z "${CCM_NO_PROXY_CHECK:-}" ]; then
+    # 检测代理端口是否可用 (CCM_NO_PROXY_CHECK=1 或 ccm proxy check off 跳过)
+    if [ -z "${CCM_NO_PROXY_CHECK:-}" ] && [ ! -f "$CCM_HOME/.no_proxy_check" ]; then
       local _proxy_url
       _proxy_url="$(. "$_ccm_official_env" 2>/dev/null; echo "${HTTPS_PROXY:-$HTTP_PROXY}")"
       if [ -n "$_proxy_url" ] && ! _ccm_check_proxy "$_proxy_url"; then
         echo "⚠️  代理 $_proxy_url 似乎未启动，直连官方可能有风险" >&2
         echo "   请先启动代理，或用 ccm use <供应商> 切换到第三方供应商" >&2
-        echo "   设置 CCM_NO_PROXY_CHECK=1 跳过此检测" >&2
+        echo "   ccm proxy check off 可跳过此检测" >&2
         echo
         if [ -t 0 ]; then
           printf '   是否仍然继续? [y/N] '
@@ -218,8 +312,7 @@ claude() {
     )
   else
     echo "💡 未找到 official.env (直连官方无代理保护)" >&2
-    echo "   运行 ccm preset official 创建代理配置" >&2
+    echo "   运行 ccm proxy set <URL> 设置代理" >&2
     command claude "$@"
   fi
 }
-fi
