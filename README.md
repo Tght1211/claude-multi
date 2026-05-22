@@ -121,18 +121,37 @@ claude                          # 走 deepseek
 ### 管理命令
 
 ```sh
-ccm list                        # 📋 列出所有供应商，✓ 标记当前在用的
+ccm list / ls                   # 📋 列出所有供应商，✓ 标记当前在用的
 ccm which                       # 🔍 打印当前供应商名
-ccm add <名称>                  # ➕ 交互式新建 .env
-ccm import [名称] [来源]         # 📥 从 JSON / settings.json 导入
-ccm preset [名称] [供应商]       # 📦 从内置预设创建
-ccm sync [名称] [--clear]       # 🔄 同步 settings.json (--clear 同时清空)
+ccm add <名称>                  # ➕ 交互式新建 .env (输入 3 个值)
+ccm import [名称] [来源]         # 📥 从 JSON 文件 / stdin / 粘贴的 JSON 导入
+ccm preset [预设名] [供应商名]    # 📦 从内置预设创建 (见下方预设列表)
+ccm sync [名称] [--clear]       # 🔄 从 settings.json 导入 (--clear 同时清空)
 ccm edit <名称>                 # ✏️  用 $EDITOR 编辑
 ccm rm <名称>                   # 🗑️  删除
 ccm reload                      # 🔃 重新扫描 .env 文件
 ccm unuse                       # 🧹 清除当前终端 env
 ccm doctor                      # 🏥 体检：检测冲突、路径、语法等
+ccm help / --help / -h          # ❓ 查看完整帮助
 ```
+
+### 内置预设
+
+```sh
+ccm preset                      # 查看所有可用预设
+ccm preset deepseek             # 查看 deepseek 配置内容
+ccm preset dashscope ds         # 直接创建 ds.env
+```
+
+| 预设名 | 说明 |
+|---|---|
+| `deepseek` | 🐳 DeepSeek — deepseek-chat |
+| `openrouter` | 🔀 OpenRouter — Claude Sonnet/Opus/Haiku 聚合 |
+| `dashscope` | ☁️ 阿里云百炼 — qwen3.7-max / qwen3.6-plus / qwen3.6-flash |
+| `kimi` | 🌙 Kimi / 月之暗面 — moonshot-v1 系列 |
+| `kimi-1m` | 🌙 Kimi K2.5 Turbo — 1M 上下文 (coding 端点) |
+| `mimo` | 📱 小米 MIMO — mimo-v2.5-pro |
+| `minimax` | 🎵 MiniMax — abab 系列 |
 
 ### Tab 补全（zsh）
 

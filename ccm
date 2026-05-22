@@ -607,30 +607,46 @@ ccm — 按终端窗口管理 Claude Code 供应商环境变量
 用法
   ccm use <名称>        把当前终端切到指定供应商 (env 注入当前 shell)
   ccm unuse             清除当前终端的 env (回退到 ~/.claude/settings.json)
-  ccm list              列出所有供应商，✓ 标记当前终端在用的
+  ccm list / ls         列出所有供应商，✓ 标记当前终端在用的
   ccm which             打印当前终端的供应商名称
   ccm sync [名称]       从 settings.json 导入 env 为供应商 (不自动清空)
       [--clear]         加 --clear 同时清空 settings.json env
-  ccm add [名称]        交互式创建供应商 .env 文件
-  ccm import [名称]     从 JSON 文件 / stdin 导入
+  ccm add [名称]        交互式创建供应商 .env 文件 (输入 3 个值)
+  ccm import [名称]     从 JSON 文件 / stdin / 粘贴的 JSON 导入
       [文件|json|-]
-  ccm preset [预设名]   查看预设列表，或从内置预设输出/创建供应商
+  ccm preset [预设名]   从内置预设输出配置 / 直接创建供应商
       [供应商名]
   ccm edit <名称>       用 $EDITOR 打开供应商的 .env 文件
   ccm rm <名称>         删除供应商 .env 文件
   ccm reload            新增/编辑 .env 后重新生成 claude-<名称> 函数
   ccm doctor            体检: 检测 settings.json 冲突、路径、语法等
 
+内置预设 (ccm preset <预设名> [供应商名])
+  deepseek     DeepSeek — deepseek-chat
+  openrouter   OpenRouter — Claude Sonnet/Opus/Haiku 聚合
+  dashscope    阿里云百炼 — qwen3.7-max / qwen3.6-plus / qwen3.6-flash
+  kimi         Kimi / 月之暗面 — moonshot-v1 系列
+  kimi-1m      Kimi K2.5 Turbo — 1M 上下文 (coding 端点)
+  mimo         小米 MIMO — mimo-v2.5-pro
+  minimax      MiniMax — abab 系列
+
 快捷别名
-  claude-<名称> [参数]  用指定供应商的 env 启动 claude (子 shell，不影响父 shell)
+  claude-<名称> [参数]  用指定供应商的 env 启动 claude
                         启动前自动检测 settings.json 冲突并提示同步
+
+示例
+  ccm preset deepseek ds       # 从预设创建 ds.env
+  ccm sync mo                  # 从 settings.json 导入为 mo
+  ccm sync --clear             # 导入 + 清空 settings.json env
+  claude-deepseek              # 启动 claude 走 deepseek
+  claude-dashscope -p "hi"     # 一次性提问
 
 配置目录
   ~/.claude-multi/providers/<名称>.env
 
 提示
-  - 搭配 cc-switch 使用: 在 cc-switch 配好供应商 → ccm sync 导入 → 反复切换同步
-  - 加 --clear 可一次性清空 settings.json env (不推荐 cc-switch 用户使用)
+  - 搭配 cc-switch: cc-switch 配供应商 → ccm sync 导入 → 反复切换同步
+  - 非 cc-switch 用户: cc-switch 中选一个 env:{} 的 profile 即可
 EOF
 }
 
