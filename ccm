@@ -186,7 +186,7 @@ _write_env_file() {
   while IFS='=' read -r key value; do
     [ -z "$key" ] && continue
     case "$key" in
-      ANTHROPIC_*|CLAUDE_CODE_*) ;;
+      ANTHROPIC_*|CLAUDE_CODE_*|HTTP_PROXY|HTTPS_PROXY|SOCKS5_PROXY|ALL_PROXY|NO_PROXY|http_proxy|https_proxy|socks5_proxy|all_proxy|no_proxy) ;;
       *) continue ;;
     esac
     echo "export ${key}=\"${value}\"" >> "$f"
@@ -384,6 +384,8 @@ cmd_preset() {
   if [ -z "$preset" ]; then
     echo "📦 $(_bold '可用预设:')"
     echo
+    echo "  $(_bold 'official')     官方 Claude — 仅代理配置 (直连官方时自动注入)"
+    echo
     echo "  $(_bold 'deepseek')     DeepSeek — deepseek-chat"
     echo "  $(_bold 'openrouter')   OpenRouter — Claude Sonnet/Opus/Haiku 聚合"
     echo "  $(_bold 'dashscope')    阿里云百炼 DashScope — qwen3.7-max / qwen3.6-plus / qwen3.6-flash"
@@ -405,6 +407,27 @@ cmd_preset() {
   local env_block=""
 
   case "$preset" in
+    official)
+      local _proxy="${CCM_PROXY:-}"
+      if [ -z "$_proxy" ]; then
+        printf '代理地址 [http://127.0.0.1:7897]: ' >&2
+        read -r _proxy
+        _proxy="${_proxy:-http://127.0.0.1:7897}"
+      fi
+      local _socks="${_proxy%:*}:${_proxy##*:}"
+      # 如果 HTTP 代理是 http:// 协议，自动生成 socks5 版本
+      case "$_proxy" in
+        http://*)
+          _socks="socks5://${_proxy#http://}"
+          ;;
+        *)
+          _socks="$_proxy"
+          ;;
+      esac
+      env_block="HTTP_PROXY=$_proxy
+HTTPS_PROXY=$_proxy
+SOCKS5_PROXY=$_socks"
+      ;;
     deepseek)
       env_block="ANTHROPIC_AUTH_TOKEN=YOUR_DEEPSEEK_KEY_HERE
 ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic
@@ -649,6 +672,7 @@ ccm — 按终端窗口管理 Claude Code 供应商环境变量
   ccm doctor            体检: 检测 settings.json 冲突、路径、语法等
 
 内置预设 (ccm preset <预设名> [供应商名])
+  official     官方 Claude — 仅代理配置 (直连官方时自动注入)
   deepseek     DeepSeek — deepseek-chat
   openrouter   OpenRouter — Claude Sonnet/Opus/Haiku 聚合
   dashscope    阿里云百炼 — qwen3.7-max / qwen3.6-plus / qwen3.6-flash
@@ -662,11 +686,18 @@ ccm — 按终端窗口管理 Claude Code 供应商环境变量
                         启动前自动检测 settings.json 冲突并提示同步
 
 示例
-  ccm preset deepseek ds       # 从预设创建 ds.env
-  ccm sync mo                  # 从 settings.json 导入为 mo
-  ccm sync --clear             # 导入 + 清空 settings.json env
-  claude-deepseek              # 启动 claude 走 deepseek
-  claude-dashscope -p "hi"     # 一次性提问
+  ccm preset official              # 创建 official.env (交互式输入代理地址)
+  ccm preset deepseek ds           # 从预设创建 ds.env
+  ccm sync mo                      # 从 settings.json 导入为 mo
+  ccm sync --clear                 # 导入 + 清空 settings.json env
+  claude                           # 无 provider 时自动注入 official.env 代理
+  claude-deepseek                  # 启动 claude 走 deepseek (无代理)
+  claude-dashscope -p "hi"         # 一次性提问
+
+环境变量
+  CCM_PROXY            预设 official 的代理地址 (跳过交互式输入)
+  CCM_NO_PROXY_CHECK   设为 1 跳过 claude 启动时的代理端口检测
+  CCM_NO_GUARD         设为 1 跳过 settings.json 冲突检测
 
 配置目录
   ~/.claude-multi/providers/<名称>.env

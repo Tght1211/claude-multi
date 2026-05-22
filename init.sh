@@ -116,6 +116,9 @@ ccm() {
         return 1
       fi
       _ccm_guard || return 1
+      # 先清除可能的代理变量（从 official 切到其他 provider 时）
+      unset HTTP_PROXY HTTPS_PROXY SOCKS5_PROXY ALL_PROXY \
+            http_proxy https_proxy socks5_proxy all_proxy NO_PROXY no_proxy 2>/dev/null
       set -a
       . "$envfile"
       set +a
@@ -130,6 +133,8 @@ ccm() {
             ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION \
             ANTHROPIC_CUSTOM_HEADERS ANTHROPIC_BETAS \
             CLAUDE_CODE_SUBAGENT_MODEL \
+            HTTP_PROXY HTTPS_PROXY SOCKS5_PROXY ALL_PROXY \
+            http_proxy https_proxy socks5_proxy all_proxy NO_PROXY no_proxy \
             CCM_ACTIVE_PROVIDER
       echo "🧹 ccm: 已清除当前终端 env (claude 将使用 ~/.claude/settings.json 默认值)"
       ;;
@@ -142,4 +147,76 @@ ccm() {
       command ccm "$cmd" "$@"
       ;;
   esac
+}
+
+# ---- proxy check: 检测代理端口是否可用 --------------------------------
+
+_ccm_check_proxy() {
+  local proxy_url="${1:-}"
+  [ -z "$proxy_url" ] && return 1
+
+  local host port
+  # 从 URL 中提取 host:port  (支持 http://host:port, socks5://host:port 等)
+  local addr="${proxy_url#*://}"
+  host="${addr%%[:/]*}"
+  port="${addr##*:}"
+  port="${port%%/*}"
+
+  [ -z "$host" ] || [ -z "$port" ] && return 1
+
+  # 尝试连接，2 秒超时
+  if command -v nc >/dev/null 2>&1; then
+    nc -z -w 2 "$host" "$port" >/dev/null 2>&1
+  elif [ -n "$BASH_VERSION" ]; then
+    (echo >/dev/tcp/"$host"/"$port") 2>/dev/null
+  else
+    # zsh: 用 zmodload zsh/net/tcp
+    zmodload zsh/net/tcp 2>/dev/null && ztcp -t 2 "$host" "$port" 2>/dev/null && { ztcp -c; return 0; }
+    # 最终回退: 不检测
+    return 0
+  fi
+}
+
+# ---- claude wrapper: 直连官方时自动注入代理 -------------------------
+# 仅在无 CCM_ACTIVE_PROVIDER 时生效，从 official.env 读取代理配置。
+# 使用子 shell 隔离代理变量，不影响当前 shell 环境。
+# 有 provider 激活时直接透传，代理不参与。
+claude() {
+  if [ -n "${CCM_ACTIVE_PROVIDER:-}" ]; then
+    command claude "$@"
+    return $?
+  fi
+
+  local _ccm_official_env="$CCM_PROVIDERS_DIR/official.env"
+  if [ -f "$_ccm_official_env" ]; then
+    # 检测代理端口是否可用 (设置 CCM_NO_PROXY_CHECK=1 跳过)
+    if [ -z "${CCM_NO_PROXY_CHECK:-}" ]; then
+      local _proxy_url
+      _proxy_url="$(. "$_ccm_official_env" 2>/dev/null; echo "${HTTPS_PROXY:-$HTTP_PROXY}")"
+      if [ -n "$_proxy_url" ] && ! _ccm_check_proxy "$_proxy_url"; then
+        echo "⚠️  代理 $_proxy_url 似乎未启动，直连官方可能有风险" >&2
+        echo "   请先启动代理，或用 ccm use <供应商> 切换到第三方供应商" >&2
+        echo "   设置 CCM_NO_PROXY_CHECK=1 跳过此检测" >&2
+        echo
+        if [ -t 0 ]; then
+          printf '   是否仍然继续? [y/N] '
+          local ans; read -r ans
+          case "$ans" in
+            y|Y|yes|YES) ;;
+            *) echo "   已取消"; return 1 ;;
+          esac
+        fi
+      fi
+    fi
+    (
+      set -a
+      . "$_ccm_official_env"
+      set +a
+      command claude "$@"
+    )
+  else
+    echo "💡 未找到 official.env (直连官方无代理保护)" >&2
+    echo "   运行 ccm preset official 创建代理配置" >&2
+    command claude "$@"
+  fi
 }
